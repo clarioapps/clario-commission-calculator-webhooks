@@ -1,0 +1,18 @@
+{
+  "name": "clario-commission-calculator-webhooks",
+  "version": "1.0.0",
+  "description": "Wix webhooks server for Clario Commission Calculator",
+  "type": "module",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "@wix/app-management": "^1.0.122",
+    "@wix/sdk": "^1.17.1",
+    "express": "^4.21.2"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
