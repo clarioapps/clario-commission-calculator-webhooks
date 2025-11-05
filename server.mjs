@@ -5,8 +5,10 @@ import { Resend } from "resend";
 
 const app = express();
 
-// 🔑 Your Wix app public key (exactly as shown in Dev Center)
-const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+/* ───────────────────── Wix App IDs & Public Keys ───────────────────── */
+
+// Commission Calculator
+const CC_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAo8A5nj/4dkLBECsMMg3B
 FzypOH6HPA9TtQdWRHeQ83kOjL1J/y1EyGqjoLxUNeE1UUeIsA5koyd1GkzQcD/v
 uCpz3lK0Y9UEZDjDPdJDZD0ylwfvI5rXXsbbk2Y7kN5CjexiPFag41QuaJ/dF34b
@@ -16,21 +18,44 @@ v/Vz9fOR8FqmPhlYG0iGpvzS1CyS0VXjbIAxAa9HiOGXFA63xf0sAU2A21hFK7JH
 HQIDAQAB
 -----END PUBLIC KEY-----`;
 
-const APP_ID = "a1b89848-2c86-4f84-88d4-4634c3a9b1f8";
+const CC_APP_ID = "a1b89848-2c86-4f84-88d4-4634c3a9b1f8";
 
-// Create Wix SDK client
-const client = createClient({
+// Transactions KPI
+const KPI_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA394uvbNpgLQpvvcBcY5p
+g0XABNMwyOKfz8q8WotK9cblQ7qk+xVJn/oqyA9KLhIwKoA2GeENLSyLb8pjR8Gt
+n4f+ObjJe/tlPonVOyzaCIIqku3ZSFIlSVh1Iw8K1RXRQzXXcNJ5bgrEgFNJjwdP
+ZM65zwzI2gNoHNp3uAm9Bs0GwJJVUH237uUdknyWyY0ThptbLWqs1a/I0lJk4qrM
+rDGdvHB9BAS0ZtAA0hYFMDQVNcFIVwMzrRR4T21rdvG7zKkTUUmVVHZR5eDphIoT
+6ZhVZ3qONjXkJb5k0b98b/7DvdO3TGneqJ3K0CTmpteKRDV72tSrG/AEgjiKAxRe
+8wIDAQAB
+-----END PUBLIC KEY-----`;
+
+const KPI_APP_ID = "40ea058f-5654-4732-9de6-7c57f3485649";
+
+/* ───────────────────── Wix SDK clients ───────────────────── */
+
+const ccClient = createClient({
   auth: AppStrategy({
-    appId: APP_ID,
-    publicKey: PUBLIC_KEY,
+    appId: CC_APP_ID,
+    publicKey: CC_PUBLIC_KEY,
   }),
   modules: { appInstances },
 });
 
-// ───────────────────── Resend Setup ─────────────────────
+const kpiClient = createClient({
+  auth: AppStrategy({
+    appId: KPI_APP_ID,
+    publicKey: KPI_PUBLIC_KEY,
+  }),
+  modules: { appInstances },
+});
+
+/* ───────────────────── Resend Setup ───────────────────── */
+
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// change these in Render → Environment
+// set these in Render → Environment
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "you@example.com";
 const FROM_EMAIL =
   process.env.FROM_EMAIL || "Clario Apps <no-reply@example.com>";
@@ -69,14 +94,15 @@ function formatDate(value) {
   }
 }
 
-// ───────────────────── Event Handlers ─────────────────────
+/* ───────────────────── Generic Event Handlers ─────────────────────
+   appName = "Clario Commission Calculator" OR "Clario Transactions KPI"
+───────────────────── */
 
-// AppInstalled
-async function handleAppInstalled(event) {
-  console.log("👉 App installed for instance:", event.instanceId);
+async function handleAppInstalled(event, appName) {
+  console.log(`👉 [${appName}] App installed for instance:`, event.instanceId);
 
   const html = `
-    <h1>Clario Commission Calculator – App Installed</h1>
+    <h1>${appName} – App Installed</h1>
     <p>The app was just <strong>installed</strong> on a site.</p>
     <ul>
       <li><strong>Instance ID:</strong> ${event.instanceId}</li>
@@ -84,22 +110,18 @@ async function handleAppInstalled(event) {
     </ul>
   `;
 
-  await sendAdminEmail(
-    "Clario Commission Calculator – App Installed",
-    html
-  );
+  await sendAdminEmail(`${appName} – App Installed`, html);
 }
 
-// PaidPlanPurchased
-async function handlePaidPlanPurchased(event) {
+async function handlePaidPlanPurchased(event, appName) {
   const p = event.payload || {};
-  console.log("👉 Paid plan purchased for instance:", event.instanceId);
+  console.log(`👉 [${appName}] Paid plan purchased for instance:`, event.instanceId);
   console.log("   Product:", p.vendorProductId);
   console.log("   Cycle:", p.cycle);
   console.log("   Expires on:", p.expiresOn);
 
   const html = `
-    <h1>Clario Commission Calculator – Paid Plan Purchased</h1>
+    <h1>${appName} – Paid Plan Purchased</h1>
     <p>A user just <strong>purchased a paid plan</strong>.</p>
     <ul>
       <li><strong>Instance ID:</strong> ${event.instanceId}</li>
@@ -110,21 +132,17 @@ async function handlePaidPlanPurchased(event) {
     </ul>
   `;
 
-  await sendAdminEmail(
-    "Clario Commission Calculator – Paid Plan Purchased",
-    html
-  );
+  await sendAdminEmail(`${appName} – Paid Plan Purchased`, html);
 }
 
-// PaidPlanAutoRenewalCancelled
-async function handlePaidPlanAutoRenewalCancelled(event) {
+async function handlePaidPlanAutoRenewalCancelled(event, appName) {
   const p = event.payload || {};
-  console.log("👉 Auto-renewal cancelled for instance:", event.instanceId);
+  console.log(`👉 [${appName}] Auto-renewal cancelled for instance:`, event.instanceId);
   console.log("   Product:", p.vendorProductId);
   console.log("   Expires on:", p.expiresOn);
 
   const html = `
-    <h1>Clario Commission Calculator – Auto-Renewal Cancelled</h1>
+    <h1>${appName} – Auto-Renewal Cancelled</h1>
     <p>A user <strong>cancelled auto-renewal</strong> for their paid plan.</p>
     <ul>
       <li><strong>Instance ID:</strong> ${event.instanceId}</li>
@@ -135,19 +153,15 @@ async function handlePaidPlanAutoRenewalCancelled(event) {
     </ul>
   `;
 
-  await sendAdminEmail(
-    "Clario Commission Calculator – Auto-Renewal Cancelled",
-    html
-  );
+  await sendAdminEmail(`${appName} – Auto-Renewal Cancelled`, html);
 }
 
-// PaidPlanReactivated
-async function handlePaidPlanReactivated(event) {
+async function handlePaidPlanReactivated(event, appName) {
   const p = event.payload || {};
-  console.log("👉 Paid plan reactivated for instance:", event.instanceId);
+  console.log(`👉 [${appName}] Paid plan reactivated for instance:`, event.instanceId);
 
   const html = `
-    <h1>Clario Commission Calculator – Plan Reactivated</h1>
+    <h1>${appName} – Plan Reactivated</h1>
     <p>A previously cancelled plan was <strong>reactivated</strong>.</p>
     <ul>
       <li><strong>Instance ID:</strong> ${event.instanceId}</li>
@@ -157,19 +171,15 @@ async function handlePaidPlanReactivated(event) {
     </ul>
   `;
 
-  await sendAdminEmail(
-    "Clario Commission Calculator – Plan Reactivated",
-    html
-  );
+  await sendAdminEmail(`${appName} – Plan Reactivated`, html);
 }
 
-// PaidPlanConvertedToPaid
-async function handlePaidPlanConvertedToPaid(event) {
+async function handlePaidPlanConvertedToPaid(event, appName) {
   const p = event.payload || {};
-  console.log("👉 Trial converted to paid for instance:", event.instanceId);
+  console.log(`👉 [${appName}] Trial converted to paid for instance:`, event.instanceId);
 
   const html = `
-    <h1>Clario Commission Calculator – Plan Converted to Paid</h1>
+    <h1>${appName} – Plan Converted to Paid</h1>
     <p>A user converted from a <strong>free or trial plan to a paid plan</strong>.</p>
     <ul>
       <li><strong>Instance ID:</strong> ${event.instanceId}</li>
@@ -178,21 +188,17 @@ async function handlePaidPlanConvertedToPaid(event) {
     </ul>
   `;
 
-  await sendAdminEmail(
-    "Clario Commission Calculator – Plan Converted to Paid",
-    html
-  );
+  await sendAdminEmail(`${appName} – Plan Converted to Paid`, html);
 }
 
-// PaidPlanTransferred
-async function handlePaidPlanTransferred(event) {
+async function handlePaidPlanTransferred(event, appName) {
   const p = event.payload || {};
-  console.log("👉 Plan transferred. Instance:", event.instanceId);
+  console.log(`👉 [${appName}] Plan transferred. Instance:`, event.instanceId);
   console.log("   From:", p.originInstanceId);
   console.log("   To:", p.targetInstanceId);
 
   const html = `
-    <h1>Clario Commission Calculator – Plan Transferred</h1>
+    <h1>${appName} – Plan Transferred</h1>
     <p>A paid plan was <strong>transferred</strong> (e.g. to a different site or owner).</p>
     <ul>
       <li><strong>Instance ID:</strong> ${event.instanceId}</li>
@@ -203,19 +209,15 @@ async function handlePaidPlanTransferred(event) {
     </ul>
   `;
 
-  await sendAdminEmail(
-    "Clario Commission Calculator – Plan Transferred",
-    html
-  );
+  await sendAdminEmail(`${appName} – Plan Transferred`, html);
 }
 
-// AppRemoved
-async function handleAppRemoved(event) {
+async function handleAppRemoved(event, appName) {
   const p = event.payload || {};
-  console.log("👉 App removed from instance:", event.instanceId);
+  console.log(`👉 [${appName}] App removed from instance:`, event.instanceId);
 
   const html = `
-    <h1>Clario Commission Calculator – App Removed</h1>
+    <h1>${appName} – App Removed</h1>
     <p>The app was <strong>removed/uninstalled</strong> from a site.</p>
     <ul>
       <li><strong>Instance ID:</strong> ${event.instanceId}</li>
@@ -223,77 +225,130 @@ async function handleAppRemoved(event) {
     </ul>
   `;
 
-  await sendAdminEmail(
-    "Clario Commission Calculator – App Removed",
-    html
-  );
+  await sendAdminEmail(`${appName} – App Removed`, html);
 }
 
-// ───────────────────── Webhook endpoint ─────────────────────
+/* ───────────────────── Webhook endpoint: Commission Calculator ───────────────────── */
 
 app.post("/webhook", express.text({ type: "*/*" }), async (req, res) => {
-  console.log("===== Webhook received =====");
+  console.log("===== [Commission Calculator] Webhook received =====");
   console.log("Raw body:", req.body);
 
   try {
-    // Let Wix SDK verify & decode the webhook
-    const event = await client.webhooks.process(req.body);
+    const event = await ccClient.webhooks.process(req.body);
 
-    console.log("Decoded event from Wix SDK:");
+    console.log("Decoded CC event from Wix SDK:");
     console.log(JSON.stringify(event, null, 2));
+
+    const appName = "Clario Commission Calculator";
 
     switch (event.eventType) {
       case "AppInstalled":
-        await handleAppInstalled(event);
+        await handleAppInstalled(event, appName);
         break;
 
       case "PaidPlanPurchased":
-        await handlePaidPlanPurchased(event);
+        await handlePaidPlanPurchased(event, appName);
         break;
 
       case "PaidPlanAutoRenewalCancelled":
-        await handlePaidPlanAutoRenewalCancelled(event);
+        await handlePaidPlanAutoRenewalCancelled(event, appName);
         break;
 
       // Reactivated – handle both names
       case "PaidPlanReactivated":
       case "PlanReactivated":
-        await handlePaidPlanReactivated(event);
+        await handlePaidPlanReactivated(event, appName);
         break;
 
       // Converted to Paid – handle both names
       case "PaidPlanConvertedToPaid":
       case "PlanConvertedToPaid":
-        await handlePaidPlanConvertedToPaid(event);
+        await handlePaidPlanConvertedToPaid(event, appName);
         break;
 
       // Transferred – handle both names
       case "PaidPlanTransferred":
       case "PlanTransferred":
-        await handlePaidPlanTransferred(event);
+        await handlePaidPlanTransferred(event, appName);
         break;
 
       case "AppRemoved":
-        await handleAppRemoved(event);
+        await handleAppRemoved(event, appName);
         break;
 
       default:
-        console.log("👉 Unhandled event type:", event.eventType);
+        console.log("[CC] 👉 Unhandled event type:", event.eventType);
         break;
     }
   } catch (err) {
-    console.error("Error in client.webhooks.process:", err);
-    // We still return 200 so Dev Center "Test" shows as delivered
+    console.error("[CC] Error in webhooks.process:", err);
   }
 
   res.status(200).send("ok");
 });
 
-// ───────────────────── Start server ─────────────────────
+/* ───────────────────── Webhook endpoint: Transactions KPI ───────────────────── */
+
+app.post("/webhook-kpi", express.text({ type: "*/*" }), async (req, res) => {
+  console.log("===== [Transactions KPI] Webhook received =====");
+  console.log("Raw body:", req.body);
+
+  try {
+    const event = await kpiClient.webhooks.process(req.body);
+
+    console.log("Decoded KPI event from Wix SDK:");
+    console.log(JSON.stringify(event, null, 2));
+
+    const appName = "Clario Transactions KPI";
+
+    switch (event.eventType) {
+      case "AppInstalled":
+        await handleAppInstalled(event, appName);
+        break;
+
+      case "PaidPlanPurchased":
+        await handlePaidPlanPurchased(event, appName);
+        break;
+
+      case "PaidPlanAutoRenewalCancelled":
+        await handlePaidPlanAutoRenewalCancelled(event, appName);
+        break;
+
+      case "PaidPlanReactivated":
+      case "PlanReactivated":
+        await handlePaidPlanReactivated(event, appName);
+        break;
+
+      case "PaidPlanConvertedToPaid":
+      case "PlanConvertedToPaid":
+        await handlePaidPlanConvertedToPaid(event, appName);
+        break;
+
+      case "PaidPlanTransferred":
+      case "PlanTransferred":
+        await handlePaidPlanTransferred(event, appName);
+        break;
+
+      case "AppRemoved":
+        await handleAppRemoved(event, appName);
+        break;
+
+      default:
+        console.log("[KPI] 👉 Unhandled event type:", event.eventType);
+        break;
+    }
+  } catch (err) {
+    console.error("[KPI] Error in webhooks.process:", err);
+  }
+
+  res.status(200).send("ok");
+});
+
+/* ───────────────────── Start server ───────────────────── */
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(`Webhook server listening on port ${PORT}`);
 });
-
