@@ -255,15 +255,21 @@ app.post("/webhook", express.text({ type: "*/*" }), async (req, res) => {
         await handlePaidPlanAutoRenewalCancelled(event);
         break;
 
+      // Reactivated – handle both names
       case "PaidPlanReactivated":
+      case "PlanReactivated":
         await handlePaidPlanReactivated(event);
         break;
 
+      // Converted to Paid – handle both names
       case "PaidPlanConvertedToPaid":
+      case "PlanConvertedToPaid":
         await handlePaidPlanConvertedToPaid(event);
         break;
 
+      // Transferred – handle both names
       case "PaidPlanTransferred":
+      case "PlanTransferred":
         await handlePaidPlanTransferred(event);
         break;
 
