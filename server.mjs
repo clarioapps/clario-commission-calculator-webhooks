@@ -34,18 +34,12 @@ rDGdvHB9BAS0ZtAA0hYFMDQVNcFIVwMzrRR4T21rdvG7zKkTUUmVVHZR5eDphIoT
 /* ───────────────────── Wix SDK Clients ───────────────────── */
 
 const clientCommission = createClient({
-  auth: AppStrategy({
-    appId: COMM_APP_ID,
-    publicKey: COMM_PUBLIC_KEY,
-  }),
+  auth: AppStrategy({ appId: COMM_APP_ID, publicKey: COMM_PUBLIC_KEY }),
   modules: { appInstances },
 });
 
 const clientKpi = createClient({
-  auth: AppStrategy({
-    appId: KPI_APP_ID,
-    publicKey: KPI_PUBLIC_KEY,
-  }),
+  auth: AppStrategy({ appId: KPI_APP_ID, publicKey: KPI_PUBLIC_KEY }),
   modules: { appInstances },
 });
 
@@ -64,9 +58,7 @@ async function sendAdminEmail(subject, html) {
     return;
   }
   if (!ADMIN_EMAIL || !FROM_EMAIL) {
-    console.warn(
-      "⚠️ ADMIN_EMAIL or FROM_EMAIL not set – set them in Render environment."
-    );
+    console.warn("⚠️ ADMIN_EMAIL or FROM_EMAIL not set – set them in Render environment.");
     return;
   }
 
@@ -92,10 +84,68 @@ function formatDate(value) {
   }
 }
 
-/* ───────────────────── Shared Event Handlers ───────────────────── */
+/* ───────────────────── Extra Instance Details (permissions required) ───────────────────── */
+/**
+ * Requires these app permissions (in each app):
+ *  - Read site, business, and email details
+ *  - Read Site Owner Email
+ */
+async function fetchInstanceDetails(client, instanceId) {
+  try {
+    const result = await client.appInstances.getAppInstance({ instanceId });
+    console.log("🔎 appInstances.getAppInstance result:", JSON.stringify(result, null, 2));
 
-async function handleAppInstalled(event, appLabel) {
+    const ai = result?.appInstance || result;
+
+    const ownerEmail =
+      ai?.ownerEmail ||
+      ai?.owner?.email ||
+      ai?.siteOwnerEmail ||
+      ai?.contactDetails?.email ||
+      ai?.businessInfo?.email ||
+      "N/A";
+
+    const siteId =
+      ai?.siteId ||
+      ai?.metaSiteId ||
+      ai?.installation?.siteId ||
+      "N/A";
+
+    const siteName =
+      ai?.siteName ||
+      ai?.businessInfo?.name ||
+      ai?.installation?.siteDisplayName ||
+      "N/A";
+
+    const language =
+      ai?.language ||
+      ai?.siteLanguage ||
+      ai?.settings?.language ||
+      "N/A";
+
+    const currency =
+      ai?.currency ||
+      ai?.settings?.currency ||
+      "N/A";
+
+    return { ownerEmail, siteId, siteName, language, currency };
+  } catch (err) {
+    console.error("❌ fetchInstanceDetails error:", err);
+    return {
+      ownerEmail: "N/A",
+      siteId: "N/A",
+      siteName: "N/A",
+      language: "N/A",
+      currency: "N/A",
+    };
+  }
+}
+
+/* ───────────────────── Shared Event Handlers (now accept client) ───────────────────── */
+
+async function handleAppInstalled(event, appLabel, client) {
   console.log(`👉 [${appLabel}] App installed for instance:`, event.instanceId);
+  const extra = await fetchInstanceDetails(client, event.instanceId);
 
   const html = `
     <h1>${appLabel} – App Installed</h1>
@@ -103,18 +153,20 @@ async function handleAppInstalled(event, appLabel) {
     <ul>
       <li><strong>Instance ID:</strong> ${event.instanceId}</li>
       <li><strong>App ID:</strong> ${event.payload?.appId || "N/A"}</li>
+      <li><strong>Owner Email:</strong> ${extra.ownerEmail}</li>
+      <li><strong>Site Name:</strong> ${extra.siteName}</li>
+      <li><strong>Site ID:</strong> ${extra.siteId}</li>
+      <li><strong>Language:</strong> ${extra.language}</li>
+      <li><strong>Currency:</strong> ${extra.currency}</li>
     </ul>
   `;
-
   await sendAdminEmail(`${appLabel} – App Installed`, html);
 }
 
-async function handlePaidPlanPurchased(event, appLabel) {
+async function handlePaidPlanPurchased(event, appLabel, client) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] Paid plan purchased for instance:`, event.instanceId);
-  console.log("   Product:", p.vendorProductId);
-  console.log("   Cycle:", p.cycle);
-  console.log("   Expires on:", p.expiresOn);
+  const extra = await fetchInstanceDetails(client, event.instanceId);
 
   const html = `
     <h1>${appLabel} – Paid Plan Purchased</h1>
@@ -125,17 +177,20 @@ async function handlePaidPlanPurchased(event, appLabel) {
       <li><strong>Cycle:</strong> ${p.cycle || "N/A"}</li>
       <li><strong>Purchased at:</strong> ${formatDate(p.operationTimeStamp)}</li>
       <li><strong>Expires on:</strong> ${formatDate(p.expiresOn)}</li>
+      <li><strong>Owner Email:</strong> ${extra.ownerEmail}</li>
+      <li><strong>Site Name:</strong> ${extra.siteName}</li>
+      <li><strong>Site ID:</strong> ${extra.siteId}</li>
+      <li><strong>Language:</strong> ${extra.language}</li>
+      <li><strong>Currency:</strong> ${extra.currency}</li>
     </ul>
   `;
-
   await sendAdminEmail(`${appLabel} – Paid Plan Purchased`, html);
 }
 
-async function handlePaidPlanAutoRenewalCancelled(event, appLabel) {
+async function handlePaidPlanAutoRenewalCancelled(event, appLabel, client) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] Auto-renewal cancelled for instance:`, event.instanceId);
-  console.log("   Product:", p.vendorProductId);
-  console.log("   Expires on:", p.expiresOn);
+  const extra = await fetchInstanceDetails(client, event.instanceId);
 
   const html = `
     <h1>${appLabel} – Auto-Renewal Cancelled</h1>
@@ -146,15 +201,20 @@ async function handlePaidPlanAutoRenewalCancelled(event, appLabel) {
       <li><strong>Cycle:</strong> ${p.cycle || "N/A"}</li>
       <li><strong>Operation time:</strong> ${formatDate(p.operationTimeStamp)}</li>
       <li><strong>Expires on:</strong> ${formatDate(p.expiresOn)}</li>
+      <li><strong>Owner Email:</strong> ${extra.ownerEmail}</li>
+      <li><strong>Site Name:</strong> ${extra.siteName}</li>
+      <li><strong>Site ID:</strong> ${extra.siteId}</li>
+      <li><strong>Language:</strong> ${extra.language}</li>
+      <li><strong>Currency:</strong> ${extra.currency}</li>
     </ul>
   `;
-
   await sendAdminEmail(`${appLabel} – Auto-Renewal Cancelled`, html);
 }
 
-async function handlePaidPlanReactivated(event, appLabel) {
+async function handlePaidPlanReactivated(event, appLabel, client) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] Paid plan reactivated for instance:`, event.instanceId);
+  const extra = await fetchInstanceDetails(client, event.instanceId);
 
   const html = `
     <h1>${appLabel} – Plan Reactivated</h1>
@@ -164,15 +224,20 @@ async function handlePaidPlanReactivated(event, appLabel) {
       <li><strong>Vendor Product ID:</strong> ${p.vendorProductId || "N/A"}</li>
       <li><strong>Cycle:</strong> ${p.cycle || "N/A"}</li>
       <li><strong>Reactivated at:</strong> ${formatDate(p.operationTimeStamp)}</li>
+      <li><strong>Owner Email:</strong> ${extra.ownerEmail}</li>
+      <li><strong>Site Name:</strong> ${extra.siteName}</li>
+      <li><strong>Site ID:</strong> ${extra.siteId}</li>
+      <li><strong>Language:</strong> ${extra.language}</li>
+      <li><strong>Currency:</strong> ${extra.currency}</li>
     </ul>
   `;
-
   await sendAdminEmail(`${appLabel} – Plan Reactivated`, html);
 }
 
-async function handlePaidPlanConvertedToPaid(event, appLabel) {
+async function handlePaidPlanConvertedToPaid(event, appLabel, client) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] Trial converted to paid for instance:`, event.instanceId);
+  const extra = await fetchInstanceDetails(client, event.instanceId);
 
   const html = `
     <h1>${appLabel} – Plan Converted to Paid</h1>
@@ -181,17 +246,20 @@ async function handlePaidPlanConvertedToPaid(event, appLabel) {
       <li><strong>Instance ID:</strong> ${event.instanceId}</li>
       <li><strong>Vendor Product ID:</strong> ${p.vendorProductId || "N/A"}</li>
       <li><strong>Operation time:</strong> ${formatDate(p.operationTimeStamp)}</li>
+      <li><strong>Owner Email:</strong> ${extra.ownerEmail}</li>
+      <li><strong>Site Name:</strong> ${extra.siteName}</li>
+      <li><strong>Site ID:</strong> ${extra.siteId}</li>
+      <li><strong>Language:</strong> ${extra.language}</li>
+      <li><strong>Currency:</strong> ${extra.currency}</li>
     </ul>
   `;
-
   await sendAdminEmail(`${appLabel} – Plan Converted to Paid`, html);
 }
 
-async function handlePaidPlanTransferred(event, appLabel) {
+async function handlePaidPlanTransferred(event, appLabel, client) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] Plan transferred. Instance:`, event.instanceId);
-  console.log("   From:", p.originInstanceId);
-  console.log("   To:", p.targetInstanceId);
+  const extra = await fetchInstanceDetails(client, event.instanceId);
 
   const html = `
     <h1>${appLabel} – Plan Transferred</h1>
@@ -202,15 +270,20 @@ async function handlePaidPlanTransferred(event, appLabel) {
       <li><strong>From Instance:</strong> ${p.originInstanceId || "N/A"}</li>
       <li><strong>To Instance:</strong> ${p.targetInstanceId || "N/A"}</li>
       <li><strong>Operation time:</strong> ${formatDate(p.operationTimeStamp)}</li>
+      <li><strong>Owner Email:</strong> ${extra.ownerEmail}</li>
+      <li><strong>Site Name:</strong> ${extra.siteName}</li>
+      <li><strong>Site ID:</strong> ${extra.siteId}</li>
+      <li><strong>Language:</strong> ${extra.language}</li>
+      <li><strong>Currency:</strong> ${extra.currency}</li>
     </ul>
   `;
-
   await sendAdminEmail(`${appLabel} – Plan Transferred`, html);
 }
 
-async function handleAppRemoved(event, appLabel) {
+async function handleAppRemoved(event, appLabel, client) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] App removed from instance:`, event.instanceId);
+  const extra = await fetchInstanceDetails(client, event.instanceId);
 
   const html = `
     <h1>${appLabel} – App Removed</h1>
@@ -218,9 +291,13 @@ async function handleAppRemoved(event, appLabel) {
     <ul>
       <li><strong>Instance ID:</strong> ${event.instanceId}</li>
       <li><strong>Operation time:</strong> ${formatDate(p.operationTimeStamp)}</li>
+      <li><strong>Owner Email:</strong> ${extra.ownerEmail}</li>
+      <li><strong>Site Name:</strong> ${extra.siteName}</li>
+      <li><strong>Site ID:</strong> ${extra.siteId}</li>
+      <li><strong>Language:</strong> ${extra.language}</li>
+      <li><strong>Currency:</strong> ${extra.currency}</li>
     </ul>
   `;
-
   await sendAdminEmail(`${appLabel} – App Removed`, html);
 }
 
@@ -232,7 +309,6 @@ app.post("/webhook", express.text({ type: "*/*" }), async (req, res) => {
 
   try {
     const event = await clientCommission.webhooks.process(req.body);
-
     console.log("Decoded event from Wix SDK (Commission):");
     console.log(JSON.stringify(event, null, 2));
 
@@ -240,34 +316,34 @@ app.post("/webhook", express.text({ type: "*/*" }), async (req, res) => {
 
     switch (event.eventType) {
       case "AppInstalled":
-        await handleAppInstalled(event, appLabel);
+        await handleAppInstalled(event, appLabel, clientCommission);
         break;
 
       case "PaidPlanPurchased":
-        await handlePaidPlanPurchased(event, appLabel);
+        await handlePaidPlanPurchased(event, appLabel, clientCommission);
         break;
 
       case "PaidPlanAutoRenewalCancelled":
-        await handlePaidPlanAutoRenewalCancelled(event, appLabel);
+        await handlePaidPlanAutoRenewalCancelled(event, appLabel, clientCommission);
         break;
 
       case "PaidPlanReactivated":
       case "PlanReactivated":
-        await handlePaidPlanReactivated(event, appLabel);
+        await handlePaidPlanReactivated(event, appLabel, clientCommission);
         break;
 
       case "PaidPlanConvertedToPaid":
       case "PlanConvertedToPaid":
-        await handlePaidPlanConvertedToPaid(event, appLabel);
+        await handlePaidPlanConvertedToPaid(event, appLabel, clientCommission);
         break;
 
       case "PaidPlanTransferred":
       case "PlanTransferred":
-        await handlePaidPlanTransferred(event, appLabel);
+        await handlePaidPlanTransferred(event, appLabel, clientCommission);
         break;
 
       case "AppRemoved":
-        await handleAppRemoved(event, appLabel);
+        await handleAppRemoved(event, appLabel, clientCommission);
         break;
 
       default:
@@ -289,7 +365,6 @@ app.post("/webhook-kpi", express.text({ type: "*/*" }), async (req, res) => {
 
   try {
     const event = await clientKpi.webhooks.process(req.body);
-
     console.log("Decoded event from Wix SDK (KPI):");
     console.log(JSON.stringify(event, null, 2));
 
@@ -297,34 +372,34 @@ app.post("/webhook-kpi", express.text({ type: "*/*" }), async (req, res) => {
 
     switch (event.eventType) {
       case "AppInstalled":
-        await handleAppInstalled(event, appLabel);
+        await handleAppInstalled(event, appLabel, clientKpi);
         break;
 
       case "PaidPlanPurchased":
-        await handlePaidPlanPurchased(event, appLabel);
+        await handlePaidPlanPurchased(event, appLabel, clientKpi);
         break;
 
       case "PaidPlanAutoRenewalCancelled":
-        await handlePaidPlanAutoRenewalCancelled(event, appLabel);
+        await handlePaidPlanAutoRenewalCancelled(event, appLabel, clientKpi);
         break;
 
       case "PaidPlanReactivated":
       case "PlanReactivated":
-        await handlePaidPlanReactivated(event, appLabel);
+        await handlePaidPlanReactivated(event, appLabel, clientKpi);
         break;
 
       case "PaidPlanConvertedToPaid":
       case "PlanConvertedToPaid":
-        await handlePaidPlanConvertedToPaid(event, appLabel);
+        await handlePaidPlanConvertedToPaid(event, appLabel, clientKpi);
         break;
 
       case "PaidPlanTransferred":
       case "PlanTransferred":
-        await handlePaidPlanTransferred(event, appLabel);
+        await handlePaidPlanTransferred(event, appLabel, clientKpi);
         break;
 
       case "AppRemoved":
-        await handleAppRemoved(event, appLabel);
+        await handleAppRemoved(event, appLabel, clientKpi);
         break;
 
       default:
