@@ -1,5 +1,5 @@
 import express from "express";
-import { AppStrategy, createClient } from "@wix/sdk";
+import { createClient, AppStrategy } from "@wix/sdk";
 import { appInstances } from "@wix/app-management";
 import { Resend } from "resend";
 
@@ -9,7 +9,6 @@ const app = express();
 
 // Commission Calculator
 const COMM_APP_ID = "a1b89848-2c86-4f84-88d4-4634c3a9b1f8";
-// Public key (for verifying webhooks)
 const COMM_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAo8A5nj/4dkLBECsMMg3B
 FzypOH6HPA9TtQdWRHeQ83kOjL1J/y1EyGqjoLxUNeE1UUeIsA5koyd1GkzQcD/v
@@ -19,12 +18,9 @@ oxraNiEheNq7CyCfoTbcxdUye0Mu95EmV4UoojEqaaq0P0/CKEKLDibgofwRG5VX
 v/Vz9fOR8FqmPhlYG0iGpvzS1CyS0VXjbIAxAa9HiOGXFA63xf0sAU2A21hFK7JH
 HQIDAQAB
 -----END PUBLIC KEY-----`;
-// Private key (for server-to-server API calls) – set in Render env vars
-const COMM_PRIVATE_KEY = process.env.COMM_PRIVATE_KEY || "";
 
 // Transactions KPI
 const KPI_APP_ID = "40ea058f-5654-4732-9de6-7c57f3485649";
-// Public key (for verifying webhooks)
 const KPI_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA394uvbNpgLQpvvcBcY5p
 g0XABNMwyOKfz8q8WotK9cblQ7qk+xVJn/oqyA9KLhIwKoA2GeENLSyLb8pjR8Gt
@@ -34,38 +30,52 @@ rDGdvHB9BAS0ZtAA0hYFMDQVNcFIVwMzrRR4T21rdvG7zKkTUUmVVHZR5eDphIoT
 6ZhVZ3qONjXkJb5k0b98b/7DvdO3TGneqJ3K0CTmpteKRDV72tSrG/AEgjiKAxRe
 8wIDAQAB
 -----END PUBLIC KEY-----`;
-// Private key (for server-to-server API calls) – set in Render env vars
-const KPI_PRIVATE_KEY = process.env.KPI_PRIVATE_KEY || "";
+
+/* ───────────────────── Env (add these in Render) ─────────────────────
+COMM_APP_SECRET, KPI_APP_SECRET, RESEND_API_KEY, ADMIN_EMAIL, FROM_EMAIL
+----------------------------------------------------------------------- */
+
+const COMM_APP_SECRET = process.env.COMM_APP_SECRET || "";
+const KPI_APP_SECRET  = process.env.KPI_APP_SECRET  || "";
 
 /* ───────────────────── Wix SDK Clients ─────────────────────
-   We use TWO clients per app:
-   - “verifier” (public key) → ONLY for webhooks.process()
-   - “mgmt” (private key)    → for appInstances.getAppInstance()
+We use TWO patterns:
+1) "Verifier" clients (publicKey only) to decode webhooks.
+2) Per-event authed client (appId + appSecret + instanceId) to call app APIs.
 ---------------------------------------------------------------- */
 
-const commVerifier = createClient({
-  auth: AppStrategy({ appId: COMM_APP_ID, publicKey: COMM_PUBLIC_KEY }),
-  modules: { appInstances },
-});
-const commMgmt = createClient({
-  auth: AppStrategy({ appId: COMM_APP_ID, privateKey: COMM_PRIVATE_KEY }),
+const verifierCommission = createClient({
+  auth: AppStrategy({
+    appId: COMM_APP_ID,
+    publicKey: COMM_PUBLIC_KEY, // for webhooks verification
+  }),
   modules: { appInstances },
 });
 
-const kpiVerifier = createClient({
-  auth: AppStrategy({ appId: KPI_APP_ID, publicKey: KPI_PUBLIC_KEY }),
+const verifierKpi = createClient({
+  auth: AppStrategy({
+    appId: KPI_APP_ID,
+    publicKey: KPI_PUBLIC_KEY, // for webhooks verification
+  }),
   modules: { appInstances },
 });
-const kpiMgmt = createClient({
-  auth: AppStrategy({ appId: KPI_APP_ID, privateKey: KPI_PRIVATE_KEY }),
-  modules: { appInstances },
-});
+
+// Build a fully authed client bound to a specific instanceId
+function clientForInstance(appId, appSecret, instanceId) {
+  return createClient({
+    auth: AppStrategy({
+      appId,
+      appSecret,          // OAuth credential from Wix Dev Center
+      instanceId,         // from the webhook payload
+    }),
+    modules: { appInstances },
+  });
+}
 
 /* ───────────────────── Resend Setup ───────────────────── */
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 
-// change these in Render → Environment
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "you@example.com";
 const FROM_EMAIL =
   process.env.FROM_EMAIL || "Clario Apps <no-reply@example.com>";
@@ -102,65 +112,72 @@ function formatDate(value) {
   }
 }
 
-/* ───────────────────── Extra Instance Details (needs PRIVATE KEY + permissions) ───────────────────── */
-/**
- * Requires these app permissions (in each app):
- *  - Wix Developers → Read site, business, and email details
- *  - Wix Developers → Read Site Owner Email
- */
-async function fetchInstanceDetails(mgmtClient, instanceId) {
+/* ───────────────────── Extra Instance Details (needs permissions) ─────────────────────
+Permissions required (in each app, then reinstall to grant):
+- Read site, business, and email details
+- Read Site Owner Email
+---------------------------------------------------------------------------------------- */
+
+async function fetchInstanceDetails(appKey, instanceId) {
   try {
-    if (!mgmtClient) throw new Error("mgmtClient missing");
-    // Helpful guardrails for env setup:
-    const which =
-      mgmtClient === commMgmt ? "Commission" :
-      mgmtClient === kpiMgmt  ? "KPI" : "Unknown";
-    if (which === "Commission" && !COMM_PRIVATE_KEY) {
-      throw new Error("COMM_PRIVATE_KEY env var not set");
-    }
-    if (which === "KPI" && !KPI_PRIVATE_KEY) {
-      throw new Error("KPI_PRIVATE_KEY env var not set");
+    let appId, appSecret;
+    if (appKey === "commission") {
+      appId = COMM_APP_ID;
+      appSecret = COMM_APP_SECRET;
+    } else if (appKey === "kpi") {
+      appId = KPI_APP_ID;
+      appSecret = KPI_APP_SECRET;
+    } else {
+      throw new Error("Unknown appKey");
     }
 
-    const result = await mgmtClient.appInstances.getAppInstance({ instanceId });
-    console.log("🔎 appInstances.getAppInstance result:", JSON.stringify(result, null, 2));
+    if (!appSecret) {
+      console.warn(`⚠️ ${appKey.toUpperCase()}_APP_SECRET not set – details may be N/A.`);
+    }
 
+    const authed = clientForInstance(appId, appSecret, instanceId);
+    const result = await authed.appInstances.getAppInstance({ instanceId });
+
+    // Log the full shape once to confirm fields in production
+    console.log(`🔎 getAppInstance (${appKey}) result:`, JSON.stringify(result, null, 2));
+
+    // Try common locations
     const ai = result?.appInstance || result;
 
     const ownerEmail =
+      ai?.site?.ownerInfo?.email ||
       ai?.ownerEmail ||
       ai?.owner?.email ||
-      ai?.site?.ownerInfo?.email ||
       ai?.siteOwnerEmail ||
       ai?.contactDetails?.email ||
       ai?.businessInfo?.email ||
       "N/A";
 
     const siteId =
+      ai?.site?.metaSiteId ||
       ai?.siteId ||
       ai?.metaSiteId ||
       ai?.installation?.siteId ||
-      ai?.site?.id ||
       "N/A";
 
     const siteName =
+      ai?.site?.siteDisplayName ||
       ai?.siteName ||
       ai?.businessInfo?.name ||
       ai?.installation?.siteDisplayName ||
-      ai?.site?.siteDisplayName ||
       "N/A";
 
     const language =
+      ai?.site?.language ||
       ai?.language ||
       ai?.siteLanguage ||
       ai?.settings?.language ||
-      ai?.site?.language ||
       "N/A";
 
     const currency =
+      ai?.site?.paymentCurrency ||
       ai?.currency ||
       ai?.settings?.currency ||
-      ai?.site?.paymentCurrency ||
       "N/A";
 
     return { ownerEmail, siteId, siteName, language, currency };
@@ -176,11 +193,11 @@ async function fetchInstanceDetails(mgmtClient, instanceId) {
   }
 }
 
-/* ───────────────────── Shared Event Handlers (now accept mgmtClient) ───────────────────── */
+/* ───────────────────── Shared Email Builders ───────────────────── */
 
-async function handleAppInstalled(event, appLabel, mgmtClient) {
+async function handleAppInstalled(event, appLabel, appKey) {
   console.log(`👉 [${appLabel}] App installed for instance:`, event.instanceId);
-  const extra = await fetchInstanceDetails(mgmtClient, event.instanceId);
+  const extra = await fetchInstanceDetails(appKey, event.instanceId);
 
   const html = `
     <h1>${appLabel} – App Installed</h1>
@@ -198,10 +215,10 @@ async function handleAppInstalled(event, appLabel, mgmtClient) {
   await sendAdminEmail(`${appLabel} – App Installed`, html);
 }
 
-async function handlePaidPlanPurchased(event, appLabel, mgmtClient) {
+async function handlePaidPlanPurchased(event, appLabel, appKey) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] Paid plan purchased for instance:`, event.instanceId);
-  const extra = await fetchInstanceDetails(mgmtClient, event.instanceId);
+  const extra = await fetchInstanceDetails(appKey, event.instanceId);
 
   const html = `
     <h1>${appLabel} – Paid Plan Purchased</h1>
@@ -222,10 +239,10 @@ async function handlePaidPlanPurchased(event, appLabel, mgmtClient) {
   await sendAdminEmail(`${appLabel} – Paid Plan Purchased`, html);
 }
 
-async function handlePaidPlanAutoRenewalCancelled(event, appLabel, mgmtClient) {
+async function handlePaidPlanAutoRenewalCancelled(event, appLabel, appKey) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] Auto-renewal cancelled for instance:`, event.instanceId);
-  const extra = await fetchInstanceDetails(mgmtClient, event.instanceId);
+  const extra = await fetchInstanceDetails(appKey, event.instanceId);
 
   const html = `
     <h1>${appLabel} – Auto-Renewal Cancelled</h1>
@@ -246,10 +263,10 @@ async function handlePaidPlanAutoRenewalCancelled(event, appLabel, mgmtClient) {
   await sendAdminEmail(`${appLabel} – Auto-Renewal Cancelled`, html);
 }
 
-async function handlePaidPlanReactivated(event, appLabel, mgmtClient) {
+async function handlePaidPlanReactivated(event, appLabel, appKey) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] Paid plan reactivated for instance:`, event.instanceId);
-  const extra = await fetchInstanceDetails(mgmtClient, event.instanceId);
+  const extra = await fetchInstanceDetails(appKey, event.instanceId);
 
   const html = `
     <h1>${appLabel} – Plan Reactivated</h1>
@@ -269,10 +286,10 @@ async function handlePaidPlanReactivated(event, appLabel, mgmtClient) {
   await sendAdminEmail(`${appLabel} – Plan Reactivated`, html);
 }
 
-async function handlePaidPlanConvertedToPaid(event, appLabel, mgmtClient) {
+async function handlePaidPlanConvertedToPaid(event, appLabel, appKey) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] Trial converted to paid for instance:`, event.instanceId);
-  const extra = await fetchInstanceDetails(mgmtClient, event.instanceId);
+  const extra = await fetchInstanceDetails(appKey, event.instanceId);
 
   const html = `
     <h1>${appLabel} – Plan Converted to Paid</h1>
@@ -291,10 +308,10 @@ async function handlePaidPlanConvertedToPaid(event, appLabel, mgmtClient) {
   await sendAdminEmail(`${appLabel} – Plan Converted to Paid`, html);
 }
 
-async function handlePaidPlanTransferred(event, appLabel, mgmtClient) {
+async function handlePaidPlanTransferred(event, appLabel, appKey) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] Plan transferred. Instance:`, event.instanceId);
-  const extra = await fetchInstanceDetails(mgmtClient, event.instanceId);
+  const extra = await fetchInstanceDetails(appKey, event.instanceId);
 
   const html = `
     <h1>${appLabel} – Plan Transferred</h1>
@@ -315,10 +332,10 @@ async function handlePaidPlanTransferred(event, appLabel, mgmtClient) {
   await sendAdminEmail(`${appLabel} – Plan Transferred`, html);
 }
 
-async function handleAppRemoved(event, appLabel, mgmtClient) {
+async function handleAppRemoved(event, appLabel, appKey) {
   const p = event.payload || {};
   console.log(`👉 [${appLabel}] App removed from instance:`, event.instanceId);
-  const extra = await fetchInstanceDetails(mgmtClient, event.instanceId);
+  const extra = await fetchInstanceDetails(appKey, event.instanceId);
 
   const html = `
     <h1>${appLabel} – App Removed</h1>
@@ -343,8 +360,7 @@ app.post("/webhook", express.text({ type: "*/*" }), async (req, res) => {
   console.log("Raw body:", req.body);
 
   try {
-    // Use the PUBLIC-KEY client only to decode/verify the webhook:
-    const event = await commVerifier.webhooks.process(req.body);
+    const event = await verifierCommission.webhooks.process(req.body);
     console.log("Decoded event from Wix SDK (Commission):");
     console.log(JSON.stringify(event, null, 2));
 
@@ -352,34 +368,34 @@ app.post("/webhook", express.text({ type: "*/*" }), async (req, res) => {
 
     switch (event.eventType) {
       case "AppInstalled":
-        await handleAppInstalled(event, appLabel, commMgmt);
+        await handleAppInstalled(event, appLabel, "commission");
         break;
 
       case "PaidPlanPurchased":
-        await handlePaidPlanPurchased(event, appLabel, commMgmt);
+        await handlePaidPlanPurchased(event, appLabel, "commission");
         break;
 
       case "PaidPlanAutoRenewalCancelled":
-        await handlePaidPlanAutoRenewalCancelled(event, appLabel, commMgmt);
+        await handlePaidPlanAutoRenewalCancelled(event, appLabel, "commission");
         break;
 
       case "PaidPlanReactivated":
       case "PlanReactivated":
-        await handlePaidPlanReactivated(event, appLabel, commMgmt);
+        await handlePaidPlanReactivated(event, appLabel, "commission");
         break;
 
       case "PaidPlanConvertedToPaid":
       case "PlanConvertedToPaid":
-        await handlePaidPlanConvertedToPaid(event, appLabel, commMgmt);
+        await handlePaidPlanConvertedToPaid(event, appLabel, "commission");
         break;
 
       case "PaidPlanTransferred":
       case "PlanTransferred":
-        await handlePaidPlanTransferred(event, appLabel, commMgmt);
+        await handlePaidPlanTransferred(event, appLabel, "commission");
         break;
 
       case "AppRemoved":
-        await handleAppRemoved(event, appLabel, commMgmt);
+        await handleAppRemoved(event, appLabel, "commission");
         break;
 
       default:
@@ -387,7 +403,7 @@ app.post("/webhook", express.text({ type: "*/*" }), async (req, res) => {
         break;
     }
   } catch (err) {
-    console.error("[Commission] Error in webhook handler:", err);
+    console.error("[Commission] Error in webhooks.process:", err);
   }
 
   res.status(200).send("ok");
@@ -400,8 +416,7 @@ app.post("/webhook-kpi", express.text({ type: "*/*" }), async (req, res) => {
   console.log("Raw body:", req.body);
 
   try {
-    // Use the PUBLIC-KEY client only to decode/verify the webhook:
-    const event = await kpiVerifier.webhooks.process(req.body);
+    const event = await verifierKpi.webhooks.process(req.body);
     console.log("Decoded event from Wix SDK (KPI):");
     console.log(JSON.stringify(event, null, 2));
 
@@ -409,34 +424,34 @@ app.post("/webhook-kpi", express.text({ type: "*/*" }), async (req, res) => {
 
     switch (event.eventType) {
       case "AppInstalled":
-        await handleAppInstalled(event, appLabel, kpiMgmt);
+        await handleAppInstalled(event, appLabel, "kpi");
         break;
 
       case "PaidPlanPurchased":
-        await handlePaidPlanPurchased(event, appLabel, kpiMgmt);
+        await handlePaidPlanPurchased(event, appLabel, "kpi");
         break;
 
       case "PaidPlanAutoRenewalCancelled":
-        await handlePaidPlanAutoRenewalCancelled(event, appLabel, kpiMgmt);
+        await handlePaidPlanAutoRenewalCancelled(event, appLabel, "kpi");
         break;
 
       case "PaidPlanReactivated":
       case "PlanReactivated":
-        await handlePaidPlanReactivated(event, appLabel, kpiMgmt);
+        await handlePaidPlanReactivated(event, appLabel, "kpi");
         break;
 
       case "PaidPlanConvertedToPaid":
       case "PlanConvertedToPaid":
-        await handlePaidPlanConvertedToPaid(event, appLabel, kpiMgmt);
+        await handlePaidPlanConvertedToPaid(event, appLabel, "kpi");
         break;
 
       case "PaidPlanTransferred":
       case "PlanTransferred":
-        await handlePaidPlanTransferred(event, appLabel, kpiMgmt);
+        await handlePaidPlanTransferred(event, appLabel, "kpi");
         break;
 
       case "AppRemoved":
-        await handleAppRemoved(event, appLabel, kpiMgmt);
+        await handleAppRemoved(event, appLabel, "kpi");
         break;
 
       default:
@@ -444,7 +459,7 @@ app.post("/webhook-kpi", express.text({ type: "*/*" }), async (req, res) => {
         break;
     }
   } catch (err) {
-    console.error("[KPI] Error in webhook handler:", err);
+    console.error("[KPI] Error in webhooks.process:", err);
   }
 
   res.status(200).send("ok");
@@ -456,6 +471,4 @@ const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
   console.log(`Webhook server listening on port ${PORT}`);
-  if (!COMM_PRIVATE_KEY) console.warn("⚠️ COMM_PRIVATE_KEY not set (will cause N/A on Commission instance details).");
-  if (!KPI_PRIVATE_KEY)  console.warn("⚠️ KPI_PRIVATE_KEY not set (will cause N/A on KPI instance details).");
 });
