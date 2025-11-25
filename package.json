@@ -7,13 +7,12 @@
   "scripts": {
     "start": "node server.mjs"
   },
+  "engines": { "node": ">=18 <=22" },
   "dependencies": {
     "@wix/app-management": "^1.0.122",
+    "@wix/business-tools": "^1.0.0",
     "@wix/sdk": "^1.17.1",
     "express": "^4.21.2",
     "resend": "^6.4.1"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  }
 }
