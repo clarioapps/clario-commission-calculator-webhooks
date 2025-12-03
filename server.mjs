@@ -35,20 +35,26 @@ rDGdvHB9BAS0ZtAA0hYFMDQVNcFIVwMzrRR4T21rdvG7zKkTUUmVVHZR5eDphIoT
 8wIDAQAB
 -----END PUBLIC KEY-----`;
 
-/* ───────────────────── Env (set in Render → Environment) ─────────────────────
-  COMM_APP_SECRET   = Commission app OAuth Client Secret (from Dev Center)
-  KPI_APP_SECRET    = KPI app OAuth Client Secret (from Dev Center)
-  RESEND_API_KEY    = your Resend key (optional, for email)
-  ADMIN_EMAIL       = where to send admin emails
-  FROM_EMAIL        = "Clario Apps <no-reply@yourdomain.com>"
--------------------------------------------------------------------------- */
+// 3-in-1 Mortgage Calculator
+const MORTGAGE_APP_ID = "1f98b470-b5ed-4a30-964d-eac0970e876c";
+const MORTGAGE_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+PASTE_YOUR_MORTGAGE_APP_PUBLIC_KEY_FROM_DEV_CENTER_HERE
+-----END PUBLIC KEY-----`;
 
-const COMM_APP_SECRET = process.env.COMM_APP_SECRET || "";
-const KPI_APP_SECRET  = process.env.KPI_APP_SECRET  || "";
+/* ───────────────────── Env (Render → Environment) ─────────────────────
+  COMM_APP_SECRET      = Commission app OAuth Client Secret
+  KPI_APP_SECRET       = KPI app OAuth Client Secret
+  MORTGAGE_APP_SECRET  = Mortgage app OAuth Client Secret
+  RESEND_API_KEY       = your Resend API key (optional, for email)
+  ADMIN_EMAIL          = where to send admin emails
+  FROM_EMAIL           = "Clario Apps <no-reply@yourdomain.com>"
+----------------------------------------------------------------------- */
 
-/* ───────────────────── Verifier Clients (public key only) ─────────────────────
-   Used solely to verify/decode the incoming Wix webhook JWT.
-------------------------------------------------------------------------------- */
+const COMM_APP_SECRET     = process.env.COMM_APP_SECRET     || "";
+const KPI_APP_SECRET      = process.env.KPI_APP_SECRET      || "";
+const MORTGAGE_APP_SECRET = process.env.MORTGAGE_APP_SECRET || "";
+
+/* ───────────────────── Verifier Clients (public key only) ───────────────────── */
 
 const verifierCommission = createClient({
   auth: AppStrategy({ appId: COMM_APP_ID, publicKey: COMM_PUBLIC_KEY }),
@@ -60,17 +66,16 @@ const verifierKpi = createClient({
   modules: { appInstances },
 });
 
-/* ───────────────────── Per-event Authed Client Builder ─────────────────────
-   We must pass appId + appSecret + instanceId so the SDK mints an access token.
------------------------------------------------------------------------------ */
+const verifierMortgage = createClient({
+  auth: AppStrategy({ appId: MORTGAGE_APP_ID, publicKey: MORTGAGE_PUBLIC_KEY }),
+  modules: { appInstances },
+});
+
+/* ───────────────────── Per-event Authed Client Builder ───────────────────── */
 
 function clientForInstance(appId, appSecret, instanceId) {
   return createClient({
-    auth: AppStrategy({
-      appId,
-      appSecret,     // OAuth Client Secret from Dev Center
-      instanceId,    // from the webhook event payload
-    }),
+    auth: AppStrategy({ appId, appSecret, instanceId }),
     modules: { appInstances, siteProperties },
   });
 }
@@ -104,24 +109,29 @@ function isoOrNA(v) {
 }
 
 /* ───────────────────── Fetch Extra Instance Details ─────────────────────
-   Requires app permissions (then reinstall the app to grant them):
+   Requires permissions:
    - Read site, business, and email details  (SITE_SETTINGS.VIEW)
    - Read Site Owner Email
 ------------------------------------------------------------------------- */
 
 async function fetchInstanceDetails(appKey, instanceId) {
   try {
-    const isCommission = appKey === "commission";
-    const appId        = isCommission ? COMM_APP_ID     : KPI_APP_ID;
-    const appSecret    = isCommission ? COMM_APP_SECRET : KPI_APP_SECRET;
+    let appId, appSecret;
+    if (appKey === "commission") {
+      appId = COMM_APP_ID; appSecret = COMM_APP_SECRET;
+    } else if (appKey === "kpi") {
+      appId = KPI_APP_ID; appSecret = KPI_APP_SECRET;
+    } else { // mortgage
+      appId = MORTGAGE_APP_ID; appSecret = MORTGAGE_APP_SECRET;
+    }
 
     if (!appSecret) {
-      console.warn(`⚠️ ${isCommission ? "COMM" : "KPI"}_APP_SECRET not set – details may be N/A.`);
+      console.warn(`⚠️ ${appKey.toUpperCase()}_APP_SECRET not set – details may be N/A.`);
     }
 
     const authed = clientForInstance(appId, appSecret, instanceId);
 
-    // 1) App Instance (owner email & metaSiteId often live here)
+    // 1) App Instance
     let ai;
     try {
       ai = await authed.appInstances.getAppInstance({ instanceId });
@@ -130,7 +140,7 @@ async function fetchInstanceDetails(appKey, instanceId) {
       console.error("❌ getAppInstance failed:", e);
     }
 
-    // 2) Site Properties (site name, language, currency, business email)
+    // 2) Site Properties
     let sp;
     try {
       sp = await authed.siteProperties.getSiteProperties({
@@ -141,7 +151,6 @@ async function fetchInstanceDetails(appKey, instanceId) {
       console.error("❌ getSiteProperties failed:", e);
     }
 
-    // Normalize fields defensively
     const siteBlock = ai?.site || ai?.appInstance?.site;
     const ownerEmail =
       siteBlock?.ownerInfo?.email ||
@@ -318,16 +327,16 @@ app.post("/webhook", async (req, res) => {
 
     const appLabel = "Clario Commission Calculator";
     switch (event.eventType) {
-      case "AppInstalled":                await handleAppInstalled(event, appLabel, "commission"); break;
-      case "PaidPlanPurchased":           await handlePaidPlanPurchased(event, appLabel, "commission"); break;
-      case "PaidPlanAutoRenewalCancelled":await handlePaidPlanAutoRenewalCancelled(event, appLabel, "commission"); break;
+      case "AppInstalled":                 await handleAppInstalled(event, appLabel, "commission"); break;
+      case "PaidPlanPurchased":            await handlePaidPlanPurchased(event, appLabel, "commission"); break;
+      case "PaidPlanAutoRenewalCancelled": await handlePaidPlanAutoRenewalCancelled(event, appLabel, "commission"); break;
       case "PaidPlanReactivated":
-      case "PlanReactivated":             await handlePaidPlanReactivated(event, appLabel, "commission"); break;
+      case "PlanReactivated":              await handlePaidPlanReactivated(event, appLabel, "commission"); break;
       case "PaidPlanConvertedToPaid":
-      case "PlanConvertedToPaid":         await handlePaidPlanConvertedToPaid(event, appLabel, "commission"); break;
+      case "PlanConvertedToPaid":          await handlePaidPlanConvertedToPaid(event, appLabel, "commission"); break;
       case "PaidPlanTransferred":
-      case "PlanTransferred":             await handlePaidPlanTransferred(event, appLabel, "commission"); break;
-      case "AppRemoved":                  await handleAppRemoved(event, appLabel, "commission"); break;
+      case "PlanTransferred":              await handlePaidPlanTransferred(event, appLabel, "commission"); break;
+      case "AppRemoved":                   await handleAppRemoved(event, appLabel, "commission"); break;
       default: console.log("[Commission] Unhandled event type:", event.eventType);
     }
   } catch (err) {
@@ -347,20 +356,49 @@ app.post("/webhook-kpi", async (req, res) => {
 
     const appLabel = "Clario Transactions KPI";
     switch (event.eventType) {
-      case "AppInstalled":                await handleAppInstalled(event, appLabel, "kpi"); break;
-      case "PaidPlanPurchased":           await handlePaidPlanPurchased(event, appLabel, "kpi"); break;
-      case "PaidPlanAutoRenewalCancelled":await handlePaidPlanAutoRenewalCancelled(event, appLabel, "kpi"); break;
+      case "AppInstalled":                 await handleAppInstalled(event, appLabel, "kpi"); break;
+      case "PaidPlanPurchased":            await handlePaidPlanPurchased(event, appLabel, "kpi"); break;
+      case "PaidPlanAutoRenewalCancelled": await handlePaidPlanAutoRenewalCancelled(event, appLabel, "kpi"); break;
       case "PaidPlanReactivated":
-      case "PlanReactivated":             await handlePaidPlanReactivated(event, appLabel, "kpi"); break;
+      case "PlanReactivated":              await handlePaidPlanReactivated(event, appLabel, "kpi"); break;
       case "PaidPlanConvertedToPaid":
-      case "PlanConvertedToPaid":         await handlePaidPlanConvertedToPaid(event, appLabel, "kpi"); break;
+      case "PlanConvertedToPaid":          await handlePaidPlanConvertedToPaid(event, appLabel, "kpi"); break;
       case "PaidPlanTransferred":
-      case "PlanTransferred":             await handlePaidPlanTransferred(event, appLabel, "kpi"); break;
-      case "AppRemoved":                  await handleAppRemoved(event, appLabel, "kpi"); break;
+      case "PlanTransferred":              await handlePaidPlanTransferred(event, appLabel, "kpi"); break;
+      case "AppRemoved":                   await handleAppRemoved(event, appLabel, "kpi"); break;
       default: console.log("[KPI] Unhandled event type:", event.eventType);
     }
   } catch (err) {
     console.error("[KPI] webhooks.process failed:", err);
+  }
+
+  res.status(200).send("ok");
+});
+
+app.post("/webhook-mortgage", async (req, res) => {
+  console.log("===== [Mortgage] Webhook received =====");
+  console.log("Raw body:", req.body);
+
+  try {
+    const event = await verifierMortgage.webhooks.process(req.body);
+    console.log("Decoded event (Mortgage):", JSON.stringify(event, null, 2));
+
+    const appLabel = "Clario 3-in-1 Mortgage Calculator";
+    switch (event.eventType) {
+      case "AppInstalled":                 await handleAppInstalled(event, appLabel, "mortgage"); break;
+      case "PaidPlanPurchased":            await handlePaidPlanPurchased(event, appLabel, "mortgage"); break;
+      case "PaidPlanAutoRenewalCancelled": await handlePaidPlanAutoRenewalCancelled(event, appLabel, "mortgage"); break;
+      case "PaidPlanReactivated":
+      case "PlanReactivated":              await handlePaidPlanReactivated(event, appLabel, "mortgage"); break;
+      case "PaidPlanConvertedToPaid":
+      case "PlanConvertedToPaid":          await handlePaidPlanConvertedToPaid(event, appLabel, "mortgage"); break;
+      case "PaidPlanTransferred":
+      case "PlanTransferred":              await handlePaidPlanTransferred(event, appLabel, "mortgage"); break;
+      case "AppRemoved":                   await handleAppRemoved(event, appLabel, "mortgage"); break;
+      default: console.log("[Mortgage] Unhandled event type:", event.eventType);
+    }
+  } catch (err) {
+    console.error("[Mortgage] webhooks.process failed:", err);
   }
 
   res.status(200).send("ok");
