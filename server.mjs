@@ -6,8 +6,13 @@ import { Resend } from "resend";
 
 const app = express();
 
-// Accept raw text (Wix sends JWT as text)
-app.use(express.text({ type: "*/*" }));
+/* ───────────────────── Parsers ─────────────────────
+   IMPORTANT:
+   - Webhook routes need RAW TEXT.
+   - Our custom routes need JSON.
+*/
+app.use(express.json({ limit: "1mb" }));
+const rawText = express.text({ type: "*/*" });
 
 /* ───────────────────── Wix App IDs & Public Keys ───────────────────── */
 
@@ -45,9 +50,12 @@ PASTE_YOUR_MORTGAGE_APP_PUBLIC_KEY_FROM_DEV_CENTER_HERE
   COMM_APP_SECRET      = Commission app OAuth Client Secret
   KPI_APP_SECRET       = KPI app OAuth Client Secret
   MORTGAGE_APP_SECRET  = Mortgage app OAuth Client Secret
-  RESEND_API_KEY       = your Resend API key (optional, for email)
-  ADMIN_EMAIL          = where to send admin emails
-  FROM_EMAIL           = "Clario Apps <no-reply@yourdomain.com>"
+  RESEND_API_KEY       = your Resend API key
+
+  ADMIN_EMAIL          = optional fallback admin inbox
+  FROM_EMAIL           = "wecare@clarioapps.net" (or "Clario Apps <wecare@clarioapps.net>")
+
+  CLARIO_EMAIL_WEBHOOK_SECRET = shared secret to protect /showings/new-request
 ----------------------------------------------------------------------- */
 
 const COMM_APP_SECRET     = process.env.COMM_APP_SECRET     || "";
@@ -83,23 +91,28 @@ function clientForInstance(appId, appSecret, instanceId) {
 /* ───────────────────── Email Setup (Resend) ───────────────────── */
 
 const resend = new Resend(process.env.RESEND_API_KEY);
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "you@example.com";
-const FROM_EMAIL  = process.env.FROM_EMAIL  || "Clario Apps <no-reply@example.com>";
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "";
+const FROM_EMAIL  = process.env.FROM_EMAIL  || "Clario Apps <wecare@clarioapps.net>";
 
-async function sendAdminEmail(subject, html) {
+async function sendEmail({ to, subject, html }) {
   if (!process.env.RESEND_API_KEY) {
     console.warn("⚠️ RESEND_API_KEY not set – skipping email.");
     return;
   }
-  if (!ADMIN_EMAIL || !FROM_EMAIL) {
-    console.warn("⚠️ ADMIN_EMAIL or FROM_EMAIL not set – set them in Render environment.");
+  if (!FROM_EMAIL) {
+    console.warn("⚠️ FROM_EMAIL not set – set it in Render environment.");
     return;
   }
+  if (!to || !Array.isArray(to) || to.length === 0) {
+    console.warn("⚠️ No recipients provided – skipping email.");
+    return;
+  }
+
   try {
-    const result = await resend.emails.send({ from: FROM_EMAIL, to: [ADMIN_EMAIL], subject, html });
-    console.log("📧 Admin email sent:", result);
+    const result = await resend.emails.send({ from: FROM_EMAIL, to, subject, html });
+    console.log("📧 Email sent:", result);
   } catch (err) {
-    console.error("❌ Failed to send admin email:", err);
+    console.error("❌ Failed to send email:", err);
   }
 }
 
@@ -108,11 +121,7 @@ function isoOrNA(v) {
   try { return new Date(v).toISOString(); } catch { return String(v); }
 }
 
-/* ───────────────────── Fetch Extra Instance Details ─────────────────────
-   Requires permissions:
-   - Read site, business, and email details  (SITE_SETTINGS.VIEW)
-   - Read Site Owner Email
-------------------------------------------------------------------------- */
+/* ───────────────────── Fetch Extra Instance Details (existing) ───────────────────── */
 
 async function fetchInstanceDetails(appKey, instanceId) {
   try {
@@ -121,7 +130,7 @@ async function fetchInstanceDetails(appKey, instanceId) {
       appId = COMM_APP_ID; appSecret = COMM_APP_SECRET;
     } else if (appKey === "kpi") {
       appId = KPI_APP_ID; appSecret = KPI_APP_SECRET;
-    } else { // mortgage
+    } else {
       appId = MORTGAGE_APP_ID; appSecret = MORTGAGE_APP_SECRET;
     }
 
@@ -131,7 +140,6 @@ async function fetchInstanceDetails(appKey, instanceId) {
 
     const authed = clientForInstance(appId, appSecret, instanceId);
 
-    // 1) App Instance
     let ai;
     try {
       ai = await authed.appInstances.getAppInstance({ instanceId });
@@ -140,7 +148,6 @@ async function fetchInstanceDetails(appKey, instanceId) {
       console.error("❌ getAppInstance failed:", e);
     }
 
-    // 2) Site Properties
     let sp;
     try {
       sp = await authed.siteProperties.getSiteProperties({
@@ -176,7 +183,12 @@ async function fetchInstanceDetails(appKey, instanceId) {
   }
 }
 
-/* ───────────────────── Email Builders (shared) ───────────────────── */
+/* ───────────────────── Existing Admin Email Builders ───────────────────── */
+
+async function sendAdminEmail(subject, html) {
+  const to = ADMIN_EMAIL ? [ADMIN_EMAIL] : [];
+  await sendEmail({ to, subject, html });
+}
 
 async function handleAppInstalled(event, appLabel, appKey) {
   console.log(`👉 [${appLabel}] App installed for instance:`, event.instanceId);
@@ -315,9 +327,195 @@ async function handleAppRemoved(event, appLabel, appKey) {
   await sendAdminEmail(`${appLabel} – App Removed`, html);
 }
 
+/* ───────────────────── NEW: Showing Email (Agent/Admin) ───────────────────── */
+
+function normalizeLang(lang) {
+  const s = String(lang || "").toLowerCase();
+  if (s.startsWith("es")) return "es";
+  return "en";
+}
+
+const EMAIL_COPY = {
+  en: {
+    subject: "New Showing Request",
+    heading: "New Showing Request",
+    buyer: "Buyer",
+    property: "Property",
+    requested: "Requested",
+    approve: "Approve",
+    decline: "Decline",
+    manage: "Manage",
+    fallbackLinkNote: "If the buttons don’t work, use this link:",
+  },
+  es: {
+    subject: "Nueva solicitud de visita",
+    heading: "Nueva solicitud de visita",
+    buyer: "Comprador",
+    property: "Propiedad",
+    requested: "Solicitado",
+    approve: "Aprobar",
+    decline: "Rechazar",
+    manage: "Administrar",
+    fallbackLinkNote: "Si los botones no funcionan, usa este enlace:",
+  },
+};
+
+function wixImageToPublicUrl(value) {
+  const v = String(value || "").trim();
+  if (!v) return "";
+  if (v.startsWith("http://") || v.startsWith("https://")) return v;
+
+  // Typical: wix:image://v1/<mediaId>/<fileName>#originWidth=...
+  const m = v.match(/^wix:image:\/\/v1\/([^\/]+)\//i);
+  if (m && m[1]) {
+    return `https://static.wixstatic.com/media/${m[1]}`;
+  }
+  return "";
+}
+
+function escapeHtml(s) {
+  return String(s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function formatAddress(p) {
+  const street = p?.street || "";
+  const city = p?.city || "";
+  const state = p?.state || "";
+  const zip = p?.zip || "";
+  const line2 = [city, state].filter(Boolean).join(", ");
+  return [street, [line2, zip].filter(Boolean).join(" ")].filter(Boolean).join("<br/>");
+}
+
+function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, links }) {
+  const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
+
+  const brandLine = escapeHtml(brokerageName || agentName || "Showing Scheduler");
+  const addressHtml = formatAddress(property);
+
+  const imgUrl = wixImageToPublicUrl(property?.image);
+  const imgBlock = imgUrl
+    ? `<img src="${escapeHtml(imgUrl)}" alt="Property" style="width:100%;max-width:560px;border-radius:12px;display:block;margin:0 auto 16px auto;" />`
+    : "";
+
+  const buyerName = [buyer?.firstName, buyer?.lastName].filter(Boolean).join(" ").trim();
+  const buyerEmail = buyer?.email || "";
+  const buyerPhone = buyer?.phone || "";
+
+  const requested =
+    showing?.requestedStart ? new Date(showing.requestedStart).toString() : "";
+
+  const approveUrl = links?.approveUrl || "";
+  const declineUrl = links?.declineUrl || "";
+  const manageUrl  = links?.manageUrl  || "";
+
+  const button = (url, label) => {
+    if (!url) return "";
+    return `
+      <a href="${escapeHtml(url)}"
+         style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;border:1px solid #111;color:#111;margin-right:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;">
+        ${escapeHtml(label)}
+      </a>`;
+  };
+
+  const fallbackUrl = manageUrl || approveUrl || declineUrl || "";
+
+  return `
+  <div style="background:#f6f6f7;padding:24px;">
+    <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:16px;padding:24px;">
+      <div style="font-family:Arial,Helvetica,sans-serif;color:#111;">
+        <div style="font-size:13px;color:#555;margin-bottom:8px;">${brandLine}</div>
+        <h1 style="margin:0 0 16px 0;font-size:22px;line-height:1.2;">${escapeHtml(c.heading)}</h1>
+
+        ${imgBlock}
+
+        <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.property)}</div>
+          <div style="font-size:14px;line-height:1.4;">${addressHtml || "—"}</div>
+        </div>
+
+        <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.buyer)}</div>
+          <div style="font-size:14px;line-height:1.6;">
+            <div>${escapeHtml(buyerName || "—")}</div>
+            <div>${escapeHtml(buyerEmail || "")}</div>
+            <div>${escapeHtml(buyerPhone || "")}</div>
+          </div>
+        </div>
+
+        ${requested ? `
+          <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+            <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requested)}</div>
+            <div style="font-size:14px;line-height:1.4;">${escapeHtml(requested)}</div>
+          </div>` : ""}
+
+        <div style="margin:18px 0 8px 0;">
+          ${button(approveUrl, c.approve)}
+          ${button(declineUrl, c.decline)}
+          ${button(manageUrl,  c.manage)}
+        </div>
+
+        ${fallbackUrl ? `
+          <div style="font-size:12px;color:#666;margin-top:10px;">
+            ${escapeHtml(c.fallbackLinkNote)}<br/>
+            <a href="${escapeHtml(fallbackUrl)}">${escapeHtml(fallbackUrl)}</a>
+          </div>` : ""}
+
+        <div style="font-size:12px;color:#999;margin-top:18px;">
+          Showing ID: ${escapeHtml(showing?.id || "")}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Protected endpoint from Wix backend
+app.post("/showings/new-request", async (req, res) => {
+  try {
+    const expected = process.env.CLARIO_EMAIL_WEBHOOK_SECRET || "";
+    const got = req.headers["x-clario-secret"] || "";
+
+    if (!expected || String(got) !== String(expected)) {
+      return res.status(401).send("unauthorized");
+    }
+
+    const body = req.body || {};
+
+    const lang = normalizeLang(body.language);
+    const brokerageName = body.brokerageName || "";
+    const agentName = body.agentName || "";
+
+    const property = body.property || {};
+    const buyer = body.buyer || {};
+    const showing = body.showing || {};
+    const links = body.links || {};
+
+    // Recipients: prefer payload.to; if empty, fallback to ADMIN_EMAIL (if set)
+    let to = Array.isArray(body.to) ? body.to.filter(Boolean) : [];
+    if (to.length === 0 && ADMIN_EMAIL) to = [ADMIN_EMAIL];
+
+    const subjectBase = (EMAIL_COPY[lang] || EMAIL_COPY.en).subject;
+    const subject = brokerageName ? `${subjectBase} — ${brokerageName}` : subjectBase;
+
+    const html = buildNewShowingEmailHtml({
+      lang, brokerageName, agentName, property, buyer, showing, links
+    });
+
+    await sendEmail({ to, subject, html });
+    return res.status(200).send("ok");
+  } catch (err) {
+    console.error("❌ /showings/new-request failed:", err);
+    return res.status(500).send("error");
+  }
+});
+
 /* ───────────────────── Webhooks ───────────────────── */
 
-app.post("/webhook", async (req, res) => {
+app.post("/webhook", rawText, async (req, res) => {
   console.log("===== [Commission Calculator] Webhook received =====");
   console.log("Raw body:", req.body);
 
@@ -346,7 +544,7 @@ app.post("/webhook", async (req, res) => {
   res.status(200).send("ok");
 });
 
-app.post("/webhook-kpi", async (req, res) => {
+app.post("/webhook-kpi", rawText, async (req, res) => {
   console.log("===== [Transactions KPI] Webhook received =====");
   console.log("Raw body:", req.body);
 
@@ -375,7 +573,7 @@ app.post("/webhook-kpi", async (req, res) => {
   res.status(200).send("ok");
 });
 
-app.post("/webhook-mortgage", async (req, res) => {
+app.post("/webhook-mortgage", rawText, async (req, res) => {
   console.log("===== [Mortgage] Webhook received =====");
   console.log("Raw body:", req.body);
 
