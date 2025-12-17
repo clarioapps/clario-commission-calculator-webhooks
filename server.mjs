@@ -388,12 +388,57 @@ function escapeHtml(s) {
 }
 
 function formatAddress(p) {
-  const street = p?.street || "";
+  const street = p?.streetAddress || p?.street || p?.address || "";
   const city = p?.city || "";
   const state = p?.state || "";
-  const zip = p?.zip || "";
+  const zip = p?.zip || p?.postalCode || "";
   const line2 = [city, state].filter(Boolean).join(", ");
   return [street, [line2, zip].filter(Boolean).join(" ")].filter(Boolean).join("<br/>");
+}
+
+function localeForLang(lang) {
+  const s = String(lang || "").toLowerCase();
+  if (s.startsWith("es")) return "es-ES";
+  if (s.startsWith("fr")) return "fr-FR";
+  if (s.startsWith("de")) return "de-DE";
+  if (s.startsWith("pt")) return "pt-PT";
+  return "en-US";
+}
+
+function parseDateSafe(v) {
+  try {
+    if (!v) return null;
+    if (v instanceof Date && !isNaN(v.getTime())) return v;
+    const d = new Date(v);
+    if (!isNaN(d.getTime())) return d;
+    return null;
+  } catch (_e) {
+    return null;
+  }
+}
+
+function formatInTimeZone(dateValue, timeZone, lang) {
+  const d = parseDateSafe(dateValue);
+  if (!d) return "";
+
+  const tz = String(timeZone || "").trim() || "America/New_York";
+  const locale = localeForLang(lang);
+
+  try {
+    return new Intl.DateTimeFormat(locale, {
+      timeZone: tz,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZoneName: "short",
+    }).format(d);
+  } catch (_e) {
+    return d.toISOString();
+  }
 }
 
 function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, links, timeZone }) {
@@ -411,152 +456,47 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
   const buyerEmail = buyer?.email || "";
   const buyerPhone = buyer?.phone || "";
 
-  // ✅ TIMEZONE: use payload.timeZone first, then property/app fallbacks, then Eastern
+  // ✅ TIMEZONE: payload > showing > property > default
   const tz =
-    String(timeZone || showing?.timeZone || property?.timeZone || property?.timezone || "America/New_York").trim() ||
-    "America/New_York";
+    String(
+      timeZone ||
+      showing?.timeZone ||
+      property?.timeZone ||
+      property?.timezone ||
+      "America/New_York"
+    ).trim() || "America/New_York";
 
-  function localeForLang(l) {
-    const s = String(l || "").toLowerCase();
-    if (s === "es") return "es-ES";
-    if (s === "fr") return "fr-FR";
-    if (s === "de") return "de-DE";
-    if (s === "pt") return "pt-PT";
-    return "en-US";
-  }
-
-  function parseDateSafe(v) {
-    try {
-      if (!v) return null;
-      if (v instanceof Date && !isNaN(v.getTime())) return v;
-      const d = new Date(v);
-      if (!isNaN(d.getTime())) return d;
-      return null;
-    } catch (_e) {
-      return null;
-    }
-  }
-
-  function formatRequestedStart(value) {
-    const d = parseDateSafe(value);
-    if (!d) return "";
-
-    const locale = localeForLang(lang);
-    try {
-      const dateStr = new Intl.DateTimeFormat(locale, {
-        weekday: "short",
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        timeZone: tz,
-      }).format(d);
-
-      const timeStr = new Intl.DateTimeFormat(locale, {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-        timeZone: tz,
-      }).format(d);
-
-      return `${dateStr} ${timeStr}`;
-    } catch (_e) {
-      // Fallback: still return something deterministic
-      return d.toISOString();
-    }
-  }
-
-  const whenText = formatRequestedStart(showing?.requestedStart || showing?.requestedStartUtc || showing?.slotStart || showing?.start);
+  const whenText = formatInTimeZone(
+    showing?.requestedStart ||
+    showing?.requestedStartUtc ||
+    showing?.slotStart ||
+    showing?.start ||
+    showing?.startTime ||
+    showing?.dateTime,
+    tz,
+    lang
+  );
 
   const approveUrl = links?.approveUrl || "";
   const declineUrl = links?.declineUrl || "";
   const manageUrl  = links?.manageUrl  || "";
 
-  const actionsBlock =
-    approveUrl && declineUrl
-      ? `
-        <div style="margin:20px 0;display:flex;gap:10px;flex-wrap:wrap;">
-          <a href="${escapeHtml(approveUrl)}" style="background:#0b5cff;color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:600;display:inline-block;">${escapeHtml(c.APPROVE_BTN || "Approve")}</a>
-          <a href="${escapeHtml(declineUrl)}" style="background:#111827;color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:600;display:inline-block;">${escapeHtml(c.DECLINE_BTN || "Decline")}</a>
-          ${
-            manageUrl
-              ? `<a href="${escapeHtml(manageUrl)}" style="background:#f3f4f6;color:#111827;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:600;display:inline-block;">${escapeHtml(c.MANAGE_BTN || "Manage")}</a>`
-              : ""
-          }
-        </div>
-      `
-      : "";
+  const button = (url, label, isPrimary) => {
+    if (!url) return "";
+    const bg = isPrimary ? "#0b5cff" : "#111827";
+    const color = "#ffffff";
+    return `
+      <a href="${escapeHtml(url)}"
+         style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;background:${bg};color:${color};margin-right:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">
+        ${escapeHtml(label)}
+      </a>`;
+  };
 
-  return `
-  <div style="font-family:Arial,Helvetica,sans-serif;background:#f6f7fb;padding:24px;">
-    <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:16px;padding:22px;box-shadow:0 8px 24px rgba(0,0,0,0.06);">
-      <div style="font-size:14px;color:#6b7280;margin-bottom:6px;">${brandLine}</div>
-      <div style="font-size:22px;font-weight:700;color:#111827;margin:0 0 14px 0;">${escapeHtml(c.HEADING_NEW_REQUEST || "New showing request")}</div>
-
-      ${imgBlock}
-
-      <div style="font-size:15px;color:#111827;line-height:1.4;margin-bottom:14px;">
-        <div style="font-weight:700;margin-bottom:6px;">${escapeHtml(c.PROPERTY_LABEL || "Property")}</div>
-        <div>${addressHtml}</div>
-      </div>
-
-      <div style="font-size:15px;color:#111827;line-height:1.4;margin-bottom:14px;">
-        <div style="font-weight:700;margin-bottom:6px;">${escapeHtml(c.WHEN_LABEL || "Requested time")}</div>
-        <div>
-          ${whenText ? escapeHtml(whenText) : escapeHtml(c.WHEN_NOT_SPECIFIED || "Not specified")}
-          <span style="color:#6b7280;"> (${escapeHtml(tz)})</span>
-        </div>
-      </div>
-
-      <div style="font-size:15px;color:#111827;line-height:1.4;margin-bottom:14px;">
-        <div style="font-weight:700;margin-bottom:6px;">${escapeHtml(c.BUYER_LABEL || "Buyer")}</div>
-        <div>${escapeHtml(buyerName || c.BUYER_NAME_UNKNOWN || "Unknown")}</div>
-        ${buyerEmail ? `<div><a href="mailto:${escapeHtml(buyerEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(buyerEmail)}</a></div>` : ""}
-        ${buyerPhone ? `<div>${escapeHtml(buyerPhone)}</div>` : ""}
-      </div>
-
-      ${actionsBlock}
-
-      <div style="font-size:12px;color:#6b7280;margin-top:18px;">
-        ${escapeHtml(c.FOOTER_NOTE || "This request was generated by Clario Showing Scheduler.")}
-      </div>
-    </div>
-  </div>
-  `.trim();
-}
-
-
-function formatInTimeZone(dateValue, timeZone, lang) {
-  try {
-    const d = new Date(dateValue);
-    if (isNaN(d.getTime())) return "";
-    const tz = String(timeZone || "").trim() || "America/New_York";
-    const locale = localeForLang(lang);
-
-    return new Intl.DateTimeFormat(locale, {
-      timeZone: tz,
-      weekday: "short",
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-      timeZoneName: "short",
-    }).format(d);
-  } catch (_e) {
-    return "";
-  }
-}
-   
-  const approveUrl = links?.approveUrl || "";
-  const declineUrl = links?.declineUrl || "";
-  const manageUrl  = links?.manageUrl  || "";
-
-  const button = (url, label) => {
+  const secondaryButton = (url, label) => {
     if (!url) return "";
     return `
       <a href="${escapeHtml(url)}"
-         style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;border:1px solid #111;color:#111;margin-right:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;">
+         style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;border:1px solid #111827;color:#111827;margin-right:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;background:#ffffff;">
         ${escapeHtml(label)}
       </a>`;
   };
@@ -565,7 +505,7 @@ function formatInTimeZone(dateValue, timeZone, lang) {
 
   return `
   <div style="background:#f6f6f7;padding:24px;">
-    <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:16px;padding:24px;">
+    <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:16px;padding:24px;box-shadow:0 8px 24px rgba(0,0,0,0.06);">
       <div style="font-family:Arial,Helvetica,sans-serif;color:#111;">
         <div style="font-size:13px;color:#555;margin-bottom:8px;">${brandLine}</div>
         <h1 style="margin:0 0 16px 0;font-size:22px;line-height:1.2;">${escapeHtml(c.heading)}</h1>
@@ -581,21 +521,23 @@ function formatInTimeZone(dateValue, timeZone, lang) {
           <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.buyer)}</div>
           <div style="font-size:14px;line-height:1.6;">
             <div>${escapeHtml(buyerName || "—")}</div>
-            <div>${escapeHtml(buyerEmail || "")}</div>
-            <div>${escapeHtml(buyerPhone || "")}</div>
+            ${buyerEmail ? `<div><a href="mailto:${escapeHtml(buyerEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(buyerEmail)}</a></div>` : ""}
+            ${buyerPhone ? `<div>${escapeHtml(buyerPhone)}</div>` : ""}
           </div>
         </div>
 
-        ${requested ? `
-          <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-            <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requested)}</div>
-            <div style="font-size:14px;line-height:1.4;">${escapeHtml(requested)}</div>
-          </div>` : ""}
+        <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requested)}</div>
+          <div style="font-size:14px;line-height:1.4;">
+            ${escapeHtml(whenText || "—")}
+            ${whenText ? ` <span style="color:#6b7280;">(${escapeHtml(tz)})</span>` : ""}
+          </div>
+        </div>
 
         <div style="margin:18px 0 8px 0;">
-          ${button(approveUrl, c.approve)}
-          ${button(declineUrl, c.decline)}
-          ${button(manageUrl,  c.manage)}
+          ${button(approveUrl, c.approve, true)}
+          ${button(declineUrl, c.decline, false)}
+          ${secondaryButton(manageUrl,  c.manage)}
         </div>
 
         ${fallbackUrl ? `
@@ -609,7 +551,8 @@ function formatInTimeZone(dateValue, timeZone, lang) {
         </div>
       </div>
     </div>
-  </div>`;
+  </div>
+  `.trim();
 }
 
 // Protected endpoint from Wix backend
@@ -642,6 +585,7 @@ app.post("/showings/new-request", async (req, res) => {
       body.timeZone ||
       showing.timeZone ||
       property.timeZone ||
+      property.timezone ||
       "America/New_York";
 
     // Recipients: prefer payload.to; if empty, fallback to ADMIN_EMAIL (if set)
@@ -659,7 +603,7 @@ app.post("/showings/new-request", async (req, res) => {
       buyer,
       showing,
       links,
-      timeZone, // ✅ pass through
+      timeZone,
     });
 
     await sendEmail({ to, subject, html });
