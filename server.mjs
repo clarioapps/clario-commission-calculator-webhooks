@@ -476,7 +476,11 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
 // Protected endpoint from Wix backend
 app.post("/showings/new-request", async (req, res) => {
   try {
-    const expected = process.env.CLARIO_SHOWINGS_EMAIL_TOKEN || "";
+    const expected =
+  process.env.CLARIO_SHOWINGS_EMAIL_TOKEN ||
+  process.env.CLARIO_EMAIL_WEBHOOK_SECRET ||
+  "";
+
     const got = req.headers["x-clario-secret"] || "";
 
     if (!expected || String(got) !== String(expected)) {
