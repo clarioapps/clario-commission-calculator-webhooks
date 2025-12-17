@@ -411,9 +411,34 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
   const buyerEmail = buyer?.email || "";
   const buyerPhone = buyer?.phone || "";
 
-  const requested =
-    showing?.requestedStart ? new Date(showing.requestedStart).toString() : "";
+  function localeForLang(lang) {
+  if (lang === "es") return "es-ES";
+  return "en-US";
+}
 
+function formatInTimeZone(dateValue, timeZone, lang) {
+  try {
+    const d = new Date(dateValue);
+    if (isNaN(d.getTime())) return "";
+    const tz = String(timeZone || "").trim() || "America/New_York";
+    const locale = localeForLang(lang);
+
+    return new Intl.DateTimeFormat(locale, {
+      timeZone: tz,
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZoneName: "short",
+    }).format(d);
+  } catch (_e) {
+    return "";
+  }
+}
+   
   const approveUrl = links?.approveUrl || "";
   const declineUrl = links?.declineUrl || "";
   const manageUrl  = links?.manageUrl  || "";
