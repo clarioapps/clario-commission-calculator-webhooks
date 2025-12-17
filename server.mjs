@@ -396,7 +396,7 @@ function formatAddress(p) {
   return [street, [line2, zip].filter(Boolean).join(" ")].filter(Boolean).join("<br/>");
 }
 
-function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, links }) {
+function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, links, timeZone }) {
   const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
 
   const brandLine = escapeHtml(brokerageName || agentName || "Showing Scheduler");
@@ -411,10 +411,119 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
   const buyerEmail = buyer?.email || "";
   const buyerPhone = buyer?.phone || "";
 
-  function localeForLang(lang) {
-  if (lang === "es") return "es-ES";
-  return "en-US";
+  // ✅ TIMEZONE: use payload.timeZone first, then property/app fallbacks, then Eastern
+  const tz =
+    String(timeZone || showing?.timeZone || property?.timeZone || property?.timezone || "America/New_York").trim() ||
+    "America/New_York";
+
+  function localeForLang(l) {
+    const s = String(l || "").toLowerCase();
+    if (s === "es") return "es-ES";
+    if (s === "fr") return "fr-FR";
+    if (s === "de") return "de-DE";
+    if (s === "pt") return "pt-PT";
+    return "en-US";
+  }
+
+  function parseDateSafe(v) {
+    try {
+      if (!v) return null;
+      if (v instanceof Date && !isNaN(v.getTime())) return v;
+      const d = new Date(v);
+      if (!isNaN(d.getTime())) return d;
+      return null;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function formatRequestedStart(value) {
+    const d = parseDateSafe(value);
+    if (!d) return "";
+
+    const locale = localeForLang(lang);
+    try {
+      const dateStr = new Intl.DateTimeFormat(locale, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        timeZone: tz,
+      }).format(d);
+
+      const timeStr = new Intl.DateTimeFormat(locale, {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: tz,
+      }).format(d);
+
+      return `${dateStr} ${timeStr}`;
+    } catch (_e) {
+      // Fallback: still return something deterministic
+      return d.toISOString();
+    }
+  }
+
+  const whenText = formatRequestedStart(showing?.requestedStart || showing?.requestedStartUtc || showing?.slotStart || showing?.start);
+
+  const approveUrl = links?.approveUrl || "";
+  const declineUrl = links?.declineUrl || "";
+  const manageUrl  = links?.manageUrl  || "";
+
+  const actionsBlock =
+    approveUrl && declineUrl
+      ? `
+        <div style="margin:20px 0;display:flex;gap:10px;flex-wrap:wrap;">
+          <a href="${escapeHtml(approveUrl)}" style="background:#0b5cff;color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:600;display:inline-block;">${escapeHtml(c.APPROVE_BTN || "Approve")}</a>
+          <a href="${escapeHtml(declineUrl)}" style="background:#111827;color:#fff;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:600;display:inline-block;">${escapeHtml(c.DECLINE_BTN || "Decline")}</a>
+          ${
+            manageUrl
+              ? `<a href="${escapeHtml(manageUrl)}" style="background:#f3f4f6;color:#111827;text-decoration:none;padding:12px 16px;border-radius:10px;font-weight:600;display:inline-block;">${escapeHtml(c.MANAGE_BTN || "Manage")}</a>`
+              : ""
+          }
+        </div>
+      `
+      : "";
+
+  return `
+  <div style="font-family:Arial,Helvetica,sans-serif;background:#f6f7fb;padding:24px;">
+    <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:16px;padding:22px;box-shadow:0 8px 24px rgba(0,0,0,0.06);">
+      <div style="font-size:14px;color:#6b7280;margin-bottom:6px;">${brandLine}</div>
+      <div style="font-size:22px;font-weight:700;color:#111827;margin:0 0 14px 0;">${escapeHtml(c.HEADING_NEW_REQUEST || "New showing request")}</div>
+
+      ${imgBlock}
+
+      <div style="font-size:15px;color:#111827;line-height:1.4;margin-bottom:14px;">
+        <div style="font-weight:700;margin-bottom:6px;">${escapeHtml(c.PROPERTY_LABEL || "Property")}</div>
+        <div>${addressHtml}</div>
+      </div>
+
+      <div style="font-size:15px;color:#111827;line-height:1.4;margin-bottom:14px;">
+        <div style="font-weight:700;margin-bottom:6px;">${escapeHtml(c.WHEN_LABEL || "Requested time")}</div>
+        <div>
+          ${whenText ? escapeHtml(whenText) : escapeHtml(c.WHEN_NOT_SPECIFIED || "Not specified")}
+          <span style="color:#6b7280;"> (${escapeHtml(tz)})</span>
+        </div>
+      </div>
+
+      <div style="font-size:15px;color:#111827;line-height:1.4;margin-bottom:14px;">
+        <div style="font-weight:700;margin-bottom:6px;">${escapeHtml(c.BUYER_LABEL || "Buyer")}</div>
+        <div>${escapeHtml(buyerName || c.BUYER_NAME_UNKNOWN || "Unknown")}</div>
+        ${buyerEmail ? `<div><a href="mailto:${escapeHtml(buyerEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(buyerEmail)}</a></div>` : ""}
+        ${buyerPhone ? `<div>${escapeHtml(buyerPhone)}</div>` : ""}
+      </div>
+
+      ${actionsBlock}
+
+      <div style="font-size:12px;color:#6b7280;margin-top:18px;">
+        ${escapeHtml(c.FOOTER_NOTE || "This request was generated by Clario Showing Scheduler.")}
+      </div>
+    </div>
+  </div>
+  `.trim();
 }
+
 
 function formatInTimeZone(dateValue, timeZone, lang) {
   try {
@@ -528,6 +637,13 @@ app.post("/showings/new-request", async (req, res) => {
     const showing = body.showing || {};
     const links = body.links || {};
 
+    // ✅ Timezone resolution (payload > showing > property > fallback)
+    const timeZone =
+      body.timeZone ||
+      showing.timeZone ||
+      property.timeZone ||
+      "America/New_York";
+
     // Recipients: prefer payload.to; if empty, fallback to ADMIN_EMAIL (if set)
     let to = Array.isArray(body.to) ? body.to.filter(Boolean) : [];
     if (to.length === 0 && ADMIN_EMAIL) to = [ADMIN_EMAIL];
@@ -536,7 +652,14 @@ app.post("/showings/new-request", async (req, res) => {
     const subject = brokerageName ? `${subjectBase} — ${brokerageName}` : subjectBase;
 
     const html = buildNewShowingEmailHtml({
-      lang, brokerageName, agentName, property, buyer, showing, links
+      lang,
+      brokerageName,
+      agentName,
+      property,
+      buyer,
+      showing,
+      links,
+      timeZone, // ✅ pass through
     });
 
     await sendEmail({ to, subject, html });
