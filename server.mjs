@@ -352,6 +352,8 @@ const EMAIL_COPY = {
     decline: "Decline",
     manage: "Manage",
     fallbackLinkNote: "If the buttons don’t work, use this link:",
+    requestedProperty: "Requested (Property Time)",
+    requestedHome: "Requested (Home Time)",
   },
   es: {
     subject: "Nueva solicitud de visita",
@@ -363,6 +365,8 @@ const EMAIL_COPY = {
     decline: "Rechazar",
     manage: "Administrar",
     fallbackLinkNote: "Si los botones no funcionan, usa este enlace:",
+    requestedProperty: "Solicitado (Hora de la Propiedad)",
+    requestedHome: "Solicitado (Hora Local)",
   },
 };
 
@@ -441,6 +445,10 @@ function formatInTimeZone(dateValue, timeZone, lang) {
   }
 }
 
+function normalizeTz(v) {
+  return String(v || "").trim();
+}
+
 function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, links, timeZone }) {
   const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
 
@@ -456,8 +464,8 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
   const buyerEmail = buyer?.email || "";
   const buyerPhone = buyer?.phone || "";
 
-  // ✅ TIMEZONE: payload > showing > property > default
-  const tz =
+  // ✅ TIMEZONE: payload > showing > property > default (fallback only)
+  const tzFallback =
     String(
       timeZone ||
       showing?.timeZone ||
@@ -466,16 +474,61 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
       "America/New_York"
     ).trim() || "America/New_York";
 
-  const whenText = formatInTimeZone(
-    showing?.requestedStart ||
-    showing?.requestedStartUtc ||
-    showing?.slotStart ||
-    showing?.start ||
-    showing?.startTime ||
-    showing?.dateTime,
-    tz,
-    lang
-  );
+  // NEW: Prefer widget-provided display fields (to avoid re-formatting inconsistencies)
+  const displayCombined =
+    String(showing?.requestedStartDisplayCombined || "").trim();
+
+  const displayProperty =
+    String(showing?.requestedStartDisplayProperty || "").trim();
+
+  const displayHome =
+    String(showing?.requestedStartDisplayHome || "").trim();
+
+  const propertyTzSnap = normalizeTz(showing?.propertyTimeZoneSnapshot || property?.timeZone || property?.timezone);
+  const homeTzSnap = normalizeTz(showing?.homeTimeZoneSnapshot || "");
+
+  const hasTwoTz =
+    !!propertyTzSnap &&
+    !!homeTzSnap &&
+    propertyTzSnap !== homeTzSnap;
+
+  // FINAL: decide what to show in email
+  let requestedMainHtml = "";
+  if (displayCombined) {
+    requestedMainHtml = escapeHtml(displayCombined);
+  } else if (displayProperty && hasTwoTz && displayHome) {
+    requestedMainHtml = `
+      <div style="font-size:14px;line-height:1.4;">
+        <div><strong>${escapeHtml(c.requestedProperty)}:</strong> ${escapeHtml(displayProperty)}</div>
+        <div style="margin-top:6px;"><strong>${escapeHtml(c.requestedHome)}:</strong> ${escapeHtml(displayHome)}</div>
+      </div>
+    `.trim();
+  } else if (displayProperty) {
+    requestedMainHtml = `
+      <div style="font-size:14px;line-height:1.4;">
+        ${escapeHtml(displayProperty)}
+      </div>
+    `.trim();
+  } else {
+    // Fallback for older payloads
+    const whenText = formatInTimeZone(
+      showing?.requestedStart ||
+      showing?.requestedStartUtc ||
+      showing?.slotStart ||
+      showing?.start ||
+      showing?.startTime ||
+      showing?.dateTime,
+      tzFallback,
+      lang
+    );
+
+    requestedMainHtml = `
+      <div style="font-size:14px;line-height:1.4;">
+        ${escapeHtml(whenText || "—")}
+        ${whenText ? ` <span style="color:#6b7280;">(${escapeHtml(tzFallback)})</span>` : ""}
+      </div>
+    `.trim();
+  }
 
   const approveUrl = links?.approveUrl || "";
   const declineUrl = links?.declineUrl || "";
@@ -528,10 +581,7 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
 
         <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
           <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requested)}</div>
-          <div style="font-size:14px;line-height:1.4;">
-            ${escapeHtml(whenText || "—")}
-            ${whenText ? ` <span style="color:#6b7280;">(${escapeHtml(tz)})</span>` : ""}
-          </div>
+          ${requestedMainHtml || `<div style="font-size:14px;line-height:1.4;">—</div>`}
         </div>
 
         <div style="margin:18px 0 8px 0;">
@@ -581,6 +631,7 @@ app.post("/showings/new-request", async (req, res) => {
     const links = body.links || {};
 
     // ✅ Timezone resolution (payload > showing > property > fallback)
+    // Fallback only (preferred display strings come from the payload)
     const timeZone =
       body.timeZone ||
       showing.timeZone ||
