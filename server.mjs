@@ -53,9 +53,10 @@ PASTE_YOUR_MORTGAGE_APP_PUBLIC_KEY_FROM_DEV_CENTER_HERE
   RESEND_API_KEY       = your Resend API key
 
   ADMIN_EMAIL          = optional fallback admin inbox
-  FROM_EMAIL           = "wecare@clarioapps.net" (or "Clario Apps <wecare@clarioapps.net>")
+  FROM_EMAIL           = "Clario Apps <wecare@clarioapps.net>"
 
-  CLARIO_EMAIL_WEBHOOK_SECRET = shared secret to protect /showings/new-request
+  CLARIO_SHOWINGS_EMAIL_TOKEN = shared secret to protect /showings/new-request
+  (Optional legacy fallback) CLARIO_EMAIL_WEBHOOK_SECRET
 ----------------------------------------------------------------------- */
 
 const COMM_APP_SECRET     = process.env.COMM_APP_SECRET     || "";
@@ -103,13 +104,18 @@ async function sendEmail({ to, subject, html }) {
     console.warn("⚠️ FROM_EMAIL not set – set it in Render environment.");
     return;
   }
-  if (!to || !Array.isArray(to) || to.length === 0) {
-    console.warn("⚠️ No recipients provided – skipping email.");
+
+  // Defensive: if callers forget recipients, fall back to ADMIN_EMAIL when available.
+  let recipients = Array.isArray(to) ? to.filter(Boolean) : [];
+  if (recipients.length === 0 && ADMIN_EMAIL) recipients = [ADMIN_EMAIL];
+
+  if (!recipients || recipients.length === 0) {
+    console.warn("⚠️ No recipients provided and ADMIN_EMAIL not set – skipping email.");
     return;
   }
 
   try {
-    const result = await resend.emails.send({ from: FROM_EMAIL, to, subject, html });
+    const result = await resend.emails.send({ from: FROM_EMAIL, to: recipients, subject, html });
     console.log("📧 Email sent:", result);
   } catch (err) {
     console.error("❌ Failed to send email:", err);
@@ -365,7 +371,6 @@ function wixImageToPublicUrl(value) {
   if (!v) return "";
   if (v.startsWith("http://") || v.startsWith("https://")) return v;
 
-  // Typical: wix:image://v1/<mediaId>/<fileName>#originWidth=...
   const m = v.match(/^wix:image:\/\/v1\/([^\/]+)\//i);
   if (m && m[1]) {
     return `https://static.wixstatic.com/media/${m[1]}`;
@@ -477,9 +482,9 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
 app.post("/showings/new-request", async (req, res) => {
   try {
     const expected =
-  process.env.CLARIO_SHOWINGS_EMAIL_TOKEN ||
-  process.env.CLARIO_EMAIL_WEBHOOK_SECRET ||
-  "";
+      process.env.CLARIO_SHOWINGS_EMAIL_TOKEN ||
+      process.env.CLARIO_EMAIL_WEBHOOK_SECRET ||
+      "";
 
     const got = req.headers["x-clario-secret"] || "";
 
