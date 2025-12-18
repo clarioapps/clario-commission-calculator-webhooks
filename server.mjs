@@ -55,7 +55,7 @@ PASTE_YOUR_MORTGAGE_APP_PUBLIC_KEY_FROM_DEV_CENTER_HERE
   ADMIN_EMAIL          = optional fallback admin inbox
   FROM_EMAIL           = "Clario Apps <wecare@clarioapps.net>"
 
-  CLARIO_SHOWINGS_EMAIL_TOKEN = shared secret to protect /showings/new-request
+  CLARIO_SHOWINGS_EMAIL_TOKEN = shared secret to protect /showings/new-request and /showings/buyer-status
   (Optional legacy fallback) CLARIO_EMAIL_WEBHOOK_SECRET
 ----------------------------------------------------------------------- */
 
@@ -333,7 +333,7 @@ async function handleAppRemoved(event, appLabel, appKey) {
   await sendAdminEmail(`${appLabel} – App Removed`, html);
 }
 
-/* ───────────────────── NEW: Showing Email (Agent/Admin) ───────────────────── */
+/* ───────────────────── Showing Emails ───────────────────── */
 
 function normalizeLang(lang) {
   const s = String(lang || "").toLowerCase();
@@ -343,8 +343,8 @@ function normalizeLang(lang) {
 
 const EMAIL_COPY = {
   en: {
-    subject: "New Showing Request",
-    heading: "New Showing Request",
+    subjectNew: "New Showing Request",
+    headingNew: "New Showing Request",
     buyer: "Buyer",
     property: "Property",
     requested: "Requested",
@@ -352,10 +352,19 @@ const EMAIL_COPY = {
     fallbackLinkNote: "If the button doesn’t work, use this link:",
     requestedProperty: "Requested (Property Time)",
     requestedHome: "Requested (Home Time)",
+
+    subjectApproved: "Showing Confirmed",
+    subjectDeclined: "Showing Declined",
+    headingApproved: "Your Showing Is Confirmed",
+    headingDeclined: "Your Showing Was Declined",
+    statusLabel: "Status",
+    reasonLabel: "Reason",
+    footerApproved: "Your request has been approved. See you then.",
+    footerDeclined: "Your request was declined. Please reply to schedule another time.",
   },
   es: {
-    subject: "Nueva solicitud de visita",
-    heading: "Nueva solicitud de visita",
+    subjectNew: "Nueva solicitud de visita",
+    headingNew: "Nueva solicitud de visita",
     buyer: "Comprador",
     property: "Propiedad",
     requested: "Solicitado",
@@ -363,6 +372,15 @@ const EMAIL_COPY = {
     fallbackLinkNote: "Si el botón no funciona, usa este enlace:",
     requestedProperty: "Solicitado (Hora de la Propiedad)",
     requestedHome: "Solicitado (Hora Local)",
+
+    subjectApproved: "Visita confirmada",
+    subjectDeclined: "Visita rechazada",
+    headingApproved: "Tu visita está confirmada",
+    headingDeclined: "Tu visita fue rechazada",
+    statusLabel: "Estado",
+    reasonLabel: "Motivo",
+    footerApproved: "Tu solicitud fue aprobada.",
+    footerDeclined: "Tu solicitud fue rechazada. Responde para programar otra hora.",
   },
 };
 
@@ -445,6 +463,8 @@ function normalizeTz(v) {
   return String(v || "").trim();
 }
 
+/* ───────────────────── New Showing Request (Agent/Admin) — Option A ───────────────────── */
+
 function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, links, timeZone }) {
   const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
 
@@ -460,7 +480,6 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
   const buyerEmail = buyer?.email || "";
   const buyerPhone = buyer?.phone || "";
 
-  // ✅ TIMEZONE: payload > showing > property > default (fallback only)
   const tzFallback =
     String(
       timeZone ||
@@ -470,15 +489,9 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
       "America/New_York"
     ).trim() || "America/New_York";
 
-  // NEW: Prefer widget-provided display fields (to avoid re-formatting inconsistencies)
-  const displayCombined =
-    String(showing?.requestedStartDisplayCombined || "").trim();
-
-  const displayProperty =
-    String(showing?.requestedStartDisplayProperty || "").trim();
-
-  const displayHome =
-    String(showing?.requestedStartDisplayHome || "").trim();
+  const displayCombined = String(showing?.requestedStartDisplayCombined || "").trim();
+  const displayProperty = String(showing?.requestedStartDisplayProperty || "").trim();
+  const displayHome = String(showing?.requestedStartDisplayHome || "").trim();
 
   const propertyTzSnap = normalizeTz(showing?.propertyTimeZoneSnapshot || property?.timeZone || property?.timezone);
   const homeTzSnap = normalizeTz(showing?.homeTimeZoneSnapshot || "");
@@ -488,7 +501,6 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
     !!homeTzSnap &&
     propertyTzSnap !== homeTzSnap;
 
-  // FINAL: decide what to show in email
   let requestedMainHtml = "";
   if (displayCombined) {
     requestedMainHtml = escapeHtml(displayCombined);
@@ -506,7 +518,6 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
       </div>
     `.trim();
   } else {
-    // Fallback for older payloads
     const whenText = formatInTimeZone(
       showing?.requestedStart ||
       showing?.requestedStartUtc ||
@@ -526,7 +537,6 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
     `.trim();
   }
 
-  // OPTION A: Manage-only
   const manageUrl  = links?.manageUrl  || "";
 
   const primaryButton = (url, label) => {
@@ -545,7 +555,7 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
     <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:16px;padding:24px;box-shadow:0 8px 24px rgba(0,0,0,0.06);">
       <div style="font-family:Arial,Helvetica,sans-serif;color:#111;">
         <div style="font-size:13px;color:#555;margin-bottom:8px;">${brandLine}</div>
-        <h1 style="margin:0 0 16px 0;font-size:22px;line-height:1.2;">${escapeHtml(c.heading)}</h1>
+        <h1 style="margin:0 0 16px 0;font-size:22px;line-height:1.2;">${escapeHtml(c.headingNew)}</h1>
 
         ${imgBlock}
 
@@ -587,17 +597,130 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
   `.trim();
 }
 
-// Protected endpoint from Wix backend
+/* ───────────────────── Buyer Status Email (Buyer) ───────────────────── */
+
+function capFirst(s) {
+  const v = String(s || "").trim();
+  if (!v) return "";
+  return v.charAt(0).toUpperCase() + v.slice(1).toLowerCase();
+}
+
+function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, status, declineReasonLabel, timeZone }) {
+  const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
+
+  const brandLine = escapeHtml(brokerageName || agentName || "Showing Scheduler");
+  const addressHtml = formatAddress(property);
+
+  const imgUrl = wixImageToPublicUrl(property?.image);
+  const imgBlock = imgUrl
+    ? `<img src="${escapeHtml(imgUrl)}" alt="Property" style="width:100%;max-width:560px;border-radius:12px;display:block;margin:0 auto 16px auto;" />`
+    : "";
+
+  const buyerName = [buyer?.firstName, buyer?.lastName].filter(Boolean).join(" ").trim();
+
+  const tzFallback =
+    String(
+      timeZone ||
+      showing?.timeZone ||
+      property?.timeZone ||
+      property?.timezone ||
+      "America/New_York"
+    ).trim() || "America/New_York";
+
+  const displayCombined = String(showing?.requestedStartDisplayCombined || "").trim();
+  const requestedText =
+    displayCombined ||
+    formatInTimeZone(
+      showing?.requestedStart ||
+      showing?.requestedStartUtc ||
+      showing?.slotStart ||
+      showing?.start ||
+      showing?.startTime ||
+      showing?.dateTime,
+      tzFallback,
+      lang
+    );
+
+  const normalizedStatus = capFirst(status);
+  const isApproved = normalizedStatus === "Approved";
+  const heading = isApproved ? c.headingApproved : c.headingDeclined;
+
+  const statusPillBg = isApproved ? "#0b5cff" : "#111827";
+
+  const reasonLine = (!isApproved && declineReasonLabel)
+    ? `
+      <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+        <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.reasonLabel)}</div>
+        <div style="font-size:14px;line-height:1.4;">${escapeHtml(declineReasonLabel)}</div>
+      </div>
+    `.trim()
+    : "";
+
+  const footerText = isApproved ? c.footerApproved : c.footerDeclined;
+
+  return `
+  <div style="background:#f6f6f7;padding:24px;">
+    <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:16px;padding:24px;box-shadow:0 8px 24px rgba(0,0,0,0.06);">
+      <div style="font-family:Arial,Helvetica,sans-serif;color:#111;">
+        <div style="font-size:13px;color:#555;margin-bottom:8px;">${brandLine}</div>
+        <h1 style="margin:0 0 16px 0;font-size:22px;line-height:1.2;">${escapeHtml(heading)}</h1>
+
+        ${imgBlock}
+
+        <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.property)}</div>
+          <div style="font-size:14px;line-height:1.4;">${addressHtml || "—"}</div>
+        </div>
+
+        <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.buyer)}</div>
+          <div style="font-size:14px;line-height:1.6;">
+            <div>${escapeHtml(buyerName || "—")}</div>
+          </div>
+        </div>
+
+        <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requested)}</div>
+          <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
+        </div>
+
+        <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+          <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.statusLabel)}</div>
+          <div style="display:inline-block;padding:8px 12px;border-radius:999px;background:${statusPillBg};color:#fff;font-size:13px;font-weight:700;">
+            ${escapeHtml(normalizedStatus || "—")}
+          </div>
+        </div>
+
+        ${reasonLine}
+
+        <div style="font-size:13px;color:#111;margin-top:8px;">
+          ${escapeHtml(footerText)}
+        </div>
+
+        <div style="font-size:12px;color:#999;margin-top:18px;">
+          Showing ID: ${escapeHtml(showing?.id || "")}
+        </div>
+      </div>
+    </div>
+  </div>
+  `.trim();
+}
+
+/* ───────────────────── Protected endpoints from Wix backend ───────────────────── */
+
+function isAuthorized(req) {
+  const expected =
+    process.env.CLARIO_SHOWINGS_EMAIL_TOKEN ||
+    process.env.CLARIO_EMAIL_WEBHOOK_SECRET ||
+    "";
+
+  const got = req.headers["x-clario-secret"] || "";
+  return !!expected && String(got) === String(expected);
+}
+
 app.post("/showings/new-request", async (req, res) => {
   try {
-    const expected =
-      process.env.CLARIO_SHOWINGS_EMAIL_TOKEN ||
-      process.env.CLARIO_EMAIL_WEBHOOK_SECRET ||
-      "";
-
-    const got = req.headers["x-clario-secret"] || "";
-
-    if (!expected || String(got) !== String(expected)) {
+    if (!isAuthorized(req)) {
       return res.status(401).send("unauthorized");
     }
 
@@ -612,8 +735,6 @@ app.post("/showings/new-request", async (req, res) => {
     const showing = body.showing || {};
     const links = body.links || {};
 
-    // ✅ Timezone resolution (payload > showing > property > fallback)
-    // Fallback only (preferred display strings come from the payload)
     const timeZone =
       body.timeZone ||
       showing.timeZone ||
@@ -621,11 +742,10 @@ app.post("/showings/new-request", async (req, res) => {
       property.timezone ||
       "America/New_York";
 
-    // Recipients: prefer payload.to; if empty, fallback to ADMIN_EMAIL (if set)
     let to = Array.isArray(body.to) ? body.to.filter(Boolean) : [];
     if (to.length === 0 && ADMIN_EMAIL) to = [ADMIN_EMAIL];
 
-    const subjectBase = (EMAIL_COPY[lang] || EMAIL_COPY.en).subject;
+    const subjectBase = (EMAIL_COPY[lang] || EMAIL_COPY.en).subjectNew;
     const subject = brokerageName ? `${subjectBase} — ${brokerageName}` : subjectBase;
 
     const html = buildNewShowingEmailHtml({
@@ -643,6 +763,64 @@ app.post("/showings/new-request", async (req, res) => {
     return res.status(200).send("ok");
   } catch (err) {
     console.error("❌ /showings/new-request failed:", err);
+    return res.status(500).send("error");
+  }
+});
+
+app.post("/showings/buyer-status", async (req, res) => {
+  try {
+    if (!isAuthorized(req)) {
+      return res.status(401).send("unauthorized");
+    }
+
+    const body = req.body || {};
+
+    const lang = normalizeLang(body.language);
+    const brokerageName = body.brokerageName || "";
+    const agentName = body.agentName || "";
+
+    const property = body.property || {};
+    const buyer = body.buyer || {};
+    const showing = body.showing || {};
+
+    const status = body.status || body.showingStatus || "";
+    const declineReasonLabel =
+      (body.declineReason && body.declineReason.label) ||
+      body.declineReasonLabel ||
+      "";
+
+    const timeZone =
+      body.timeZone ||
+      showing.timeZone ||
+      property.timeZone ||
+      property.timezone ||
+      "America/New_York";
+
+    const buyerEmail = buyer.email || body.buyerEmail || "";
+    let to = [];
+    if (buyerEmail) to = [buyerEmail];
+
+    const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
+    const statusNorm = capFirst(status);
+    const subjectBase = (statusNorm === "Approved") ? c.subjectApproved : c.subjectDeclined;
+    const subject = brokerageName ? `${subjectBase} — ${brokerageName}` : subjectBase;
+
+    const html = buildBuyerStatusEmailHtml({
+      lang,
+      brokerageName,
+      agentName,
+      property,
+      buyer,
+      showing,
+      status: statusNorm,
+      declineReasonLabel,
+      timeZone,
+    });
+
+    await sendEmail({ to, subject, html });
+    return res.status(200).send("ok");
+  } catch (err) {
+    console.error("❌ /showings/buyer-status failed:", err);
     return res.status(500).send("error");
   }
 });
