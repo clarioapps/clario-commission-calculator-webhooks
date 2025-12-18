@@ -360,7 +360,8 @@ const EMAIL_COPY = {
     statusLabel: "Status",
     reasonLabel: "Reason",
     footerApproved: "Your request has been approved. See you then.",
-    footerDeclined: "Your request was declined. Please reply to schedule another time.",
+    footerDeclined: "You can request a different time using the button below.",
+    rescheduleBtn: "Pick a different time",
   },
   es: {
     subjectNew: "Nueva solicitud de visita",
@@ -380,7 +381,8 @@ const EMAIL_COPY = {
     statusLabel: "Estado",
     reasonLabel: "Motivo",
     footerApproved: "Tu solicitud fue aprobada.",
-    footerDeclined: "Tu solicitud fue rechazada. Responde para programar otra hora.",
+    footerDeclined: "Puedes solicitar otra hora usando el botón abajo.",
+    rescheduleBtn: "Elegir otra hora",
   },
 };
 
@@ -605,7 +607,7 @@ function capFirst(s) {
   return v.charAt(0).toUpperCase() + v.slice(1).toLowerCase();
 }
 
-function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, status, declineReasonLabel, timeZone }) {
+function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, status, declineReasonLabel, timeZone, links }) {
   const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
 
   const brandLine = escapeHtml(brokerageName || agentName || "Showing Scheduler");
@@ -618,18 +620,19 @@ function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, b
 
   const buyerName = [buyer?.firstName, buyer?.lastName].filter(Boolean).join(" ").trim();
 
-  const tzFallback =
-    String(
-      timeZone ||
-      showing?.timeZone ||
+  // IMPORTANT: Buyer should ONLY see PROPERTY time zone
+  const propertyTz =
+    normalizeTz(
+      showing?.propertyTimeZoneSnapshot ||
       property?.timeZone ||
       property?.timezone ||
+      timeZone ||
       "America/New_York"
-    ).trim() || "America/New_York";
+    ) || "America/New_York";
 
-  const displayCombined = String(showing?.requestedStartDisplayCombined || "").trim();
+  const displayPropertyOnly = String(showing?.requestedStartDisplayProperty || "").trim();
   const requestedText =
-    displayCombined ||
+    displayPropertyOnly ||
     formatInTimeZone(
       showing?.requestedStart ||
       showing?.requestedStartUtc ||
@@ -637,7 +640,7 @@ function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, b
       showing?.start ||
       showing?.startTime ||
       showing?.dateTime,
-      tzFallback,
+      propertyTz,
       lang
     );
 
@@ -656,7 +659,22 @@ function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, b
     `.trim()
     : "";
 
+  const schedulerUrl = links?.schedulerUrl || "";
+
+  const primaryButton = (url, label) => {
+    if (!url) return "";
+    return `
+      <a href="${escapeHtml(url)}"
+         style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;background:#0b5cff;color:#ffffff;margin-right:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">
+        ${escapeHtml(label)}
+      </a>`;
+  };
+
   const footerText = isApproved ? c.footerApproved : c.footerDeclined;
+
+  const rescheduleBlock = (!isApproved && schedulerUrl)
+    ? `<div style="margin:14px 0 8px 0;">${primaryButton(schedulerUrl, c.rescheduleBtn)}</div>`
+    : "";
 
   return `
   <div style="background:#f6f6f7;padding:24px;">
@@ -696,6 +714,8 @@ function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, b
         <div style="font-size:13px;color:#111;margin-top:8px;">
           ${escapeHtml(footerText)}
         </div>
+
+        ${rescheduleBlock}
 
         <div style="font-size:12px;color:#999;margin-top:18px;">
           Showing ID: ${escapeHtml(showing?.id || "")}
@@ -782,6 +802,7 @@ app.post("/showings/buyer-status", async (req, res) => {
     const property = body.property || {};
     const buyer = body.buyer || {};
     const showing = body.showing || {};
+    const links = body.links || {};
 
     const status = body.status || body.showingStatus || "";
     const declineReasonLabel =
@@ -815,6 +836,7 @@ app.post("/showings/buyer-status", async (req, res) => {
       status: statusNorm,
       declineReasonLabel,
       timeZone,
+      links,
     });
 
     await sendEmail({ to, subject, html });
