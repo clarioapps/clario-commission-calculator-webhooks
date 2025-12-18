@@ -348,10 +348,8 @@ const EMAIL_COPY = {
     buyer: "Buyer",
     property: "Property",
     requested: "Requested",
-    approve: "Approve",
-    decline: "Decline",
-    manage: "Manage",
-    fallbackLinkNote: "If the buttons don’t work, use this link:",
+    manage: "Manage Showing",
+    fallbackLinkNote: "If the button doesn’t work, use this link:",
     requestedProperty: "Requested (Property Time)",
     requestedHome: "Requested (Home Time)",
   },
@@ -361,10 +359,8 @@ const EMAIL_COPY = {
     buyer: "Comprador",
     property: "Propiedad",
     requested: "Solicitado",
-    approve: "Aprobar",
-    decline: "Rechazar",
-    manage: "Administrar",
-    fallbackLinkNote: "Si los botones no funcionan, usa este enlace:",
+    manage: "Administrar visita",
+    fallbackLinkNote: "Si el botón no funciona, usa este enlace:",
     requestedProperty: "Solicitado (Hora de la Propiedad)",
     requestedHome: "Solicitado (Hora Local)",
   },
@@ -530,31 +526,19 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
     `.trim();
   }
 
-  const approveUrl = links?.approveUrl || "";
-  const declineUrl = links?.declineUrl || "";
+  // OPTION A: Manage-only
   const manageUrl  = links?.manageUrl  || "";
 
-  const button = (url, label, isPrimary) => {
+  const primaryButton = (url, label) => {
     if (!url) return "";
-    const bg = isPrimary ? "#0b5cff" : "#111827";
-    const color = "#ffffff";
     return `
       <a href="${escapeHtml(url)}"
-         style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;background:${bg};color:${color};margin-right:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">
+         style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;background:#0b5cff;color:#ffffff;margin-right:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">
         ${escapeHtml(label)}
       </a>`;
   };
 
-  const secondaryButton = (url, label) => {
-    if (!url) return "";
-    return `
-      <a href="${escapeHtml(url)}"
-         style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;border:1px solid #111827;color:#111827;margin-right:10px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;background:#ffffff;">
-        ${escapeHtml(label)}
-      </a>`;
-  };
-
-  const fallbackUrl = manageUrl || approveUrl || declineUrl || "";
+  const fallbackUrl = manageUrl || "";
 
   return `
   <div style="background:#f6f6f7;padding:24px;">
@@ -585,9 +569,7 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
         </div>
 
         <div style="margin:18px 0 8px 0;">
-          ${button(approveUrl, c.approve, true)}
-          ${button(declineUrl, c.decline, false)}
-          ${secondaryButton(manageUrl,  c.manage)}
+          ${primaryButton(manageUrl, c.manage)}
         </div>
 
         ${fallbackUrl ? `
