@@ -375,20 +375,15 @@ const EMAIL_COPY = {
     contactLinePrefix: "Need help?",
     cancelRescheduleLine: "If you need to cancel or reschedule, contact the agent directly.",
 
-    // Buyer reminders
+    // Buyer reminders (24h only)
     subjectReminder24hPrefix: "Reminder: Your showing is tomorrow",
-    subjectReminder2hPrefix: "Reminder: Your showing is in 2 hours",
     headingReminder24h: "Showing reminder (24 hours)",
-    headingReminder2h: "Showing reminder (2 hours)",
     reminderIntro24h: "This is a reminder about your upcoming showing.",
-    reminderIntro2h: "This is a quick reminder that your showing is coming up soon.",
     agentContact: "Agent Contact",
 
-    // Agent reminders
+    // Agent reminders (24h only)
     subjectAgentReminder24hPrefix: "Reminder: Showing tomorrow",
-    subjectAgentReminder2hPrefix: "Reminder: Showing in 2 hours",
     agentReminderHeading24h: "Showing reminder (24 hours)",
-    agentReminderHeading2h: "Showing reminder (2 hours)",
     dashboardOnlyNote:
       "You can manage this showing from your dashboard. (The Manage Showing link is no longer valid after approve/decline.)",
   },
@@ -422,18 +417,15 @@ const EMAIL_COPY = {
     contactLinePrefix: "¿Necesitas ayuda?",
     cancelRescheduleLine: "Si necesitas cancelar o reprogramar, contacta al agente.",
 
+    // Buyer reminders (24h only)
     subjectReminder24hPrefix: "Recordatorio: tu visita es mañana",
-    subjectReminder2hPrefix: "Recordatorio: tu visita es en 2 horas",
     headingReminder24h: "Recordatorio (24 horas)",
-    headingReminder2h: "Recordatorio (2 horas)",
     reminderIntro24h: "Este es un recordatorio de tu visita.",
-    reminderIntro2h: "Recordatorio rápido: tu visita es pronto.",
     agentContact: "Contacto del agente",
 
+    // Agent reminders (24h only)
     subjectAgentReminder24hPrefix: "Recordatorio: visita mañana",
-    subjectAgentReminder2hPrefix: "Recordatorio: visita en 2 horas",
     agentReminderHeading24h: "Recordatorio (24 horas)",
-    agentReminderHeading2h: "Recordatorio (2 horas)",
     dashboardOnlyNote:
       "Puedes gestionar esta visita desde tu panel. (El enlace de administrar ya no es válido después de aprobar/rechazar.)",
   },
@@ -837,9 +829,9 @@ function buildBuyerReminderEmailHtml({ lang, brokerageName, agentName, property,
 
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
 
-  const is2h = String(reminderType || "").toLowerCase().includes("2");
-  const heading = is2h ? c.headingReminder2h : c.headingReminder24h;
-  const intro = is2h ? c.reminderIntro2h : c.reminderIntro24h;
+  // 24h only
+  const heading = c.headingReminder24h;
+  const intro = c.reminderIntro24h;
 
   const agentPhone = String(agent?.phone || "").trim();
   const agentEmail = String(agent?.email || "").trim();
@@ -916,8 +908,8 @@ function buildAgentReminderEmailHtml({ lang, brokerageName, agentName, property,
   const buyerEmail = buyer?.email || "";
   const buyerPhone = buyer?.phone || "";
 
-  const is2h = String(reminderType || "").toLowerCase().includes("2");
-  const heading = is2h ? c.agentReminderHeading2h : c.agentReminderHeading24h;
+  // 24h only
+  const heading = c.agentReminderHeading24h;
 
   const sections = `
     <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
@@ -1133,7 +1125,7 @@ app.post("/showings/buyer-received", async (req, res) => {
   }
 });
 
-/* ───────────────────── NEW: Buyer reminders (explicit endpoints) ───────────────────── */
+/* ───────────────────── NEW: Buyer reminders (explicit endpoint, 24h only) ───────────────────── */
 
 app.post("/showings/buyer-reminder-24h", async (req, res) => {
   try {
@@ -1182,54 +1174,7 @@ app.post("/showings/buyer-reminder-24h", async (req, res) => {
   }
 });
 
-app.post("/showings/buyer-reminder-2h", async (req, res) => {
-  try {
-    if (!isAuthorized(req)) return res.status(401).send("unauthorized");
-
-    const body = req.body || {};
-    const lang = normalizeLang(body.language);
-
-    const brokerageName = body.brokerageName || "";
-    const agentName = body.agentName || "";
-
-    const property = body.property || {};
-    const buyer = body.buyer || {};
-    const showing = body.showing || {};
-    const agent = body.agent || {};
-
-    const timeZone =
-      body.timeZone ||
-      property.timeZone ||
-      showing.propertyTimeZoneSnapshot ||
-      "America/New_York";
-
-    const buyerEmail = (buyer && buyer.email) ? String(buyer.email).trim() : "";
-    const to = buyerEmail ? [buyerEmail] : [];
-
-    const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
-    const subject = `${c.subjectReminder2hPrefix} — ${subjectAddressShort(property)}`;
-
-    const html = buildBuyerReminderEmailHtml({
-      lang,
-      brokerageName,
-      agentName,
-      property,
-      buyer,
-      showing,
-      timeZone,
-      reminderType: "2h",
-      agent,
-    });
-
-    await sendEmail({ to, subject, html });
-    return res.status(200).send("ok");
-  } catch (err) {
-    console.error("❌ /showings/buyer-reminder-2h failed:", err);
-    return res.status(500).send("error");
-  }
-});
-
-/* ───────────────────── NEW: Agent reminders (explicit endpoints) ───────────────────── */
+/* ───────────────────── NEW: Agent reminders (explicit endpoint, 24h only) ───────────────────── */
 
 app.post("/showings/agent-reminder-24h", async (req, res) => {
   try {
@@ -1276,107 +1221,18 @@ app.post("/showings/agent-reminder-24h", async (req, res) => {
   }
 });
 
-app.post("/showings/agent-reminder-2h", async (req, res) => {
-  try {
-    if (!isAuthorized(req)) return res.status(401).send("unauthorized");
-
-    const body = req.body || {};
-    const lang = normalizeLang(body.language);
-
-    const brokerageName = body.brokerageName || "";
-    const agentName = body.agentName || "";
-
-    const property = body.property || {};
-    const buyer = body.buyer || {};
-    const showing = body.showing || {};
-
-    const timeZone =
-      body.timeZone ||
-      property.timeZone ||
-      showing.propertyTimeZoneSnapshot ||
-      "America/New_York";
-
-    const to = Array.isArray(body.to) ? body.to.filter(Boolean) : [];
-
-    const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
-    const subject = `${c.subjectAgentReminder2hPrefix} — ${subjectAddressShort(property)}`;
-
-    const html = buildAgentReminderEmailHtml({
-      lang,
-      brokerageName,
-      agentName,
-      property,
-      buyer,
-      showing,
-      timeZone,
-      reminderType: "2h",
-    });
-
-    await sendEmail({ to, subject, html });
-    return res.status(200).send("ok");
-  } catch (err) {
-    console.error("❌ /showings/agent-reminder-2h failed:", err);
-    return res.status(500).send("error");
-  }
-});
-
 /* ───────────────────── REQUIRED by showings-reminders.jsw (hourly job) ─────────────────────
    Your hourly job posts to:
      - /showings/buyer-reminder
      - /showings/agent-reminder
-   with payload.reminderType = "24h" or "2h"
-   These wrappers route to the correct templates.
+   This server now supports 24h reminders ONLY.
 */
 
 app.post("/showings/buyer-reminder", async (req, res) => {
   try {
     if (!isAuthorized(req)) return res.status(401).send("unauthorized");
 
-    const t = String(req.body?.reminderType || "").toLowerCase();
-    if (t.includes("2")) {
-      // reuse logic by calling the internal builder flow directly
-      req.body = { ...(req.body || {}), reminderType: "2h" };
-      // fall through to same handling as /buyer-reminder-2h
-      const body = req.body || {};
-      const lang = normalizeLang(body.language);
-
-      const brokerageName = body.brokerageName || "";
-      const agentName = body.agentName || "";
-
-      const property = body.property || {};
-      const buyer = body.buyer || {};
-      const showing = body.showing || {};
-      const agent = body.agent || {};
-
-      const timeZone =
-        body.timeZone ||
-        property.timeZone ||
-        showing.propertyTimeZoneSnapshot ||
-        "America/New_York";
-
-      const buyerEmail = (buyer && buyer.email) ? String(buyer.email).trim() : "";
-      const to = buyerEmail ? [buyerEmail] : [];
-
-      const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
-      const subject = `${c.subjectReminder2hPrefix} — ${subjectAddressShort(property)}`;
-
-      const html = buildBuyerReminderEmailHtml({
-        lang,
-        brokerageName,
-        agentName,
-        property,
-        buyer,
-        showing,
-        timeZone,
-        reminderType: "2h",
-        agent,
-      });
-
-      await sendEmail({ to, subject, html });
-      return res.status(200).send("ok");
-    }
-
-    // default to 24h
+    // 24h only (ignore any reminderType provided)
     const body = req.body || {};
     const lang = normalizeLang(body.language);
 
@@ -1443,11 +1299,8 @@ app.post("/showings/agent-reminder", async (req, res) => {
     // hourly job sends `to: [agentEmail]`
     const to = Array.isArray(body.to) ? body.to.filter(Boolean) : [];
 
-    const t = String(body.reminderType || "").toLowerCase();
-    const is2h = t.includes("2");
-
     const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
-    const subject = `${is2h ? c.subjectAgentReminder2hPrefix : c.subjectAgentReminder24hPrefix} — ${subjectAddressShort(property)}`;
+    const subject = `${c.subjectAgentReminder24hPrefix} — ${subjectAddressShort(property)}`;
 
     const html = buildAgentReminderEmailHtml({
       lang,
@@ -1457,7 +1310,7 @@ app.post("/showings/agent-reminder", async (req, res) => {
       buyer,
       showing,
       timeZone,
-      reminderType: is2h ? "2h" : "24h",
+      reminderType: "24h",
     });
 
     await sendEmail({ to, subject, html });
