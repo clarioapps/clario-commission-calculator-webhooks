@@ -596,7 +596,7 @@ function primaryButton(url, label) {
 
 function emailShell({ brandLine, heading, imgBlock, sectionsHtml, footerHtml, showingId }) {
   return `
-  <div style="background:#f6f6f7;padding:24px;">
+  <div style="background:#f6f6f7;padding:14px;">
     <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:16px;padding:14px;box-shadow:0 8px 24px rgba(0,0,0,0.06);">
       <div style="font-family:Arial,Helvetica,sans-serif;color:#111;">
         ${brandLine ? `<div style="font-size:13px;color:#555;margin-bottom:8px;">${escapeHtml(brandLine)}</div>` : ""}
