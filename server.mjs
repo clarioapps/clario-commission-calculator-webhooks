@@ -128,7 +128,29 @@ function normalizeRecipients(to) {
   return { raw, emails };
 }
 
-async function sendEmail({ to, subject, html }) {
+/* ================================================================
+ * FROM display name + Reply-To support (keeps FROM email on verified domain)
+ * ================================================================ */
+function sanitizeFromName(name) {
+  return String(name || "")
+    .replace(/[<>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractEmailOnly(fromValue) {
+  const v = String(fromValue || "").trim();
+  const m = v.match(/<([^>]+)>/);
+  if (m && m[1]) return m[1].trim();
+  return v;
+}
+
+function looksLikeEmail(v) {
+  const s = String(v || "").trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+}
+
+async function sendEmail({ to, subject, html, fromName, replyTo }) {
   if (!process.env.RESEND_API_KEY) {
     console.warn("⚠️ RESEND_API_KEY not set – skipping email.");
     return;
@@ -149,12 +171,22 @@ async function sendEmail({ to, subject, html }) {
     );
   }
 
+  // Keep the FROM email address on your verified domain; vary only display name.
+  const fromEmailOnly = extractEmailOnly(FROM_EMAIL);
+  const finalFromName = sanitizeFromName(fromName) || sanitizeFromName("Clario Apps");
+  const finalFrom = `${finalFromName} <${fromEmailOnly}>`;
+
+  // Reply-To can be agent email (if valid)
+  const replyToEmail = String(replyTo || "").trim();
+  const replyToHeader = looksLikeEmail(replyToEmail) ? replyToEmail : undefined;
+
   try {
     const result = await resend.emails.send({
-      from: FROM_EMAIL,
+      from: finalFrom,
       to: emails, // ONLY valid emails
       subject,
       html,
+      ...(replyToHeader ? { reply_to: replyToHeader } : {}),
     });
 
     // Resend returns { data, error }. Treat error as failure.
@@ -1056,7 +1088,10 @@ app.post("/showings/new-request", async (req, res) => {
       timeZone,
     });
 
-    await sendEmail({ to, subject, html });
+    const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
+    const fromName = brokerageName || agentName || "Showing Scheduler";
+
+    await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
   } catch (err) {
     console.error("❌ /showings/new-request failed:", err);
@@ -1121,7 +1156,10 @@ app.post("/showings/buyer-status", async (req, res) => {
       agent,
     });
 
-    await sendEmail({ to, subject, html });
+    const replyTo = String(agent?.email || body.agentEmail || body.agent_email || "").trim();
+    const fromName = brokerageName || agentName || "Showing Scheduler";
+
+    await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
   } catch (err) {
     console.error("❌ /showings/buyer-status failed:", err);
@@ -1169,7 +1207,10 @@ app.post("/showings/buyer-received", async (req, res) => {
       timeZone,
     });
 
-    await sendEmail({ to, subject, html });
+    const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
+    const fromName = brokerageName || agentName || "Showing Scheduler";
+
+    await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
   } catch (err) {
     console.error("❌ /showings/buyer-received failed:", err);
@@ -1221,7 +1262,10 @@ app.post("/showings/buyer-reminder-24h", async (req, res) => {
       agent,
     });
 
-    await sendEmail({ to, subject, html });
+    const replyTo = String(agent?.email || body.agentEmail || body.agent_email || "").trim();
+    const fromName = brokerageName || agentName || "Showing Scheduler";
+
+    await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
   } catch (err) {
     console.error("❌ /showings/buyer-reminder-24h failed:", err);
@@ -1268,7 +1312,10 @@ app.post("/showings/agent-reminder-24h", async (req, res) => {
       reminderType: "24h",
     });
 
-    await sendEmail({ to, subject, html });
+    const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
+    const fromName = brokerageName || agentName || "Showing Scheduler";
+
+    await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
   } catch (err) {
     console.error("❌ /showings/agent-reminder-24h failed:", err);
@@ -1326,7 +1373,10 @@ app.post("/showings/buyer-reminder", async (req, res) => {
       agent,
     });
 
-    await sendEmail({ to, subject, html });
+    const replyTo = String(agent?.email || body.agentEmail || body.agent_email || "").trim();
+    const fromName = brokerageName || agentName || "Showing Scheduler";
+
+    await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
   } catch (err) {
     console.error("❌ /showings/buyer-reminder failed:", err);
@@ -1371,7 +1421,10 @@ app.post("/showings/agent-reminder", async (req, res) => {
       reminderType: "24h",
     });
 
-    await sendEmail({ to, subject, html });
+    const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
+    const fromName = brokerageName || agentName || "Showing Scheduler";
+
+    await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
   } catch (err) {
     console.error("❌ /showings/agent-reminder failed:", err);
