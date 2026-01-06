@@ -95,6 +95,39 @@ const resend = new Resend(process.env.RESEND_API_KEY);
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "";
 const FROM_EMAIL  = process.env.FROM_EMAIL  || "Clario Apps <wecare@clarioapps.net>";
 
+/* ================================================================
+ * Recipient normalization (FIXES Resend 422 Invalid `to`)
+ * - Accepts: "email@x.com", "Name <email@x.com>", "foo@x.com; bar@y.com"
+ * - Extracts valid emails, dedupes, and ONLY sends valid emails to Resend.
+ * - If no valid emails can be found, throws a clear error (so endpoint returns 500).
+ * ================================================================ */
+function extractValidEmails(input) {
+  const emailRegex = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
+  const s = String(input == null ? "" : input);
+  const matches = s.match(emailRegex) || [];
+  return matches.map((m) => String(m).trim()).filter(Boolean);
+}
+
+function normalizeRecipients(to) {
+  const raw = [];
+
+  if (Array.isArray(to)) raw.push(...to);
+  else if (typeof to === "string") raw.push(to);
+
+  // If caller forgot, let ADMIN_EMAIL try to supply recipients (but still must be valid emails)
+  if (raw.length === 0 && ADMIN_EMAIL) raw.push(ADMIN_EMAIL);
+
+  // Split on common separators and extract emails
+  let emails = raw
+    .flatMap((item) => String(item == null ? "" : item).split(/[;,]/g))
+    .flatMap((part) => extractValidEmails(part));
+
+  // Dedupe
+  emails = Array.from(new Set(emails));
+
+  return { raw, emails };
+}
+
 async function sendEmail({ to, subject, html }) {
   if (!process.env.RESEND_API_KEY) {
     console.warn("⚠️ RESEND_API_KEY not set – skipping email.");
@@ -105,31 +138,21 @@ async function sendEmail({ to, subject, html }) {
     return;
   }
 
-  // Normalize/trim recipients. Resend is strict.
-  let recipientsRaw = [];
-  if (Array.isArray(to)) recipientsRaw = to;
-  else if (typeof to === "string") recipientsRaw = [to];
+  const { raw, emails } = normalizeRecipients(to);
 
-  let recipients = recipientsRaw
-    .flatMap((x) => String(x == null ? "" : x).split(/[;,]/g))
-    .map((x) => String(x == null ? "" : x).trim())
-    .filter(Boolean);
+  console.log("📩 sendEmail raw recipients:", raw);
+  console.log("📩 sendEmail normalized emails:", emails);
 
-  // Defensive: if callers forget recipients, fall back to ADMIN_EMAIL when available.
-  if (recipients.length === 0 && ADMIN_EMAIL) {
-    const admin = String(ADMIN_EMAIL || "").trim();
-    if (admin) recipients = admin.split(/[;,]/g).map((s) => s.trim()).filter(Boolean);
-  }
-
-  if (recipients.length === 0) {
-    console.warn("⚠️ No recipients provided and ADMIN_EMAIL not set – skipping email.");
-    return;
+  if (emails.length === 0) {
+    throw new Error(
+      `No valid recipient emails found. to=${JSON.stringify(to)} ADMIN_EMAIL=${JSON.stringify(ADMIN_EMAIL)}`
+    );
   }
 
   try {
     const result = await resend.emails.send({
       from: FROM_EMAIL,
-      to: recipients,
+      to: emails, // ONLY valid emails
       subject,
       html,
     });
@@ -1173,8 +1196,11 @@ app.post("/showings/buyer-reminder-24h", async (req, res) => {
       showing.propertyTimeZoneSnapshot ||
       "America/New_York";
 
+    // FIX: allow buyer.email OR body.to for testing; sendEmail() will extract valid emails only
     const buyerEmail = (buyer && buyer.email) ? String(buyer.email).trim() : "";
-    const to = buyerEmail ? [buyerEmail] : [];
+    let to = [];
+    if (buyerEmail) to = [buyerEmail];
+    else if (Array.isArray(body.to)) to = body.to.filter(Boolean);
 
     const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
     const subject = `${c.subjectReminder24hPrefix} — ${subjectAddressShort(property)}`;
@@ -1275,8 +1301,11 @@ app.post("/showings/buyer-reminder", async (req, res) => {
       showing.propertyTimeZoneSnapshot ||
       "America/New_York";
 
+    // FIX: allow buyer.email OR body.to for testing; sendEmail() will extract valid emails only
     const buyerEmail = (buyer && buyer.email) ? String(buyer.email).trim() : "";
-    const to = buyerEmail ? [buyerEmail] : [];
+    let to = [];
+    if (buyerEmail) to = [buyerEmail];
+    else if (Array.isArray(body.to)) to = body.to.filter(Boolean);
 
     const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
     const subject = `${c.subjectReminder24hPrefix} — ${subjectAddressShort(property)}`;
