@@ -501,12 +501,16 @@ function escapeHtml(s) {
 }
 
 function formatAddress(p) {
-  const street = p?.street || p?.streetAddress || p?.address || "";
-  const city = p?.city || "";
-  const state = p?.state || "";
-  const zip = p?.zip || p?.postalCode || "";
+  const street = String(p?.street || p?.streetAddress || p?.address || "").trim();
+  const city = String(p?.city || "").trim();
+  const state = String(p?.state || "").trim();
+  const zip = String(p?.zip || p?.postalCode || "").trim();
+
   const line2 = [city, state].filter(Boolean).join(", ");
-  return [street, [line2, zip].filter(Boolean).join(" ")].filter(Boolean).join("<br/>");
+  const tail = [line2, zip].filter(Boolean).join(" ");
+
+  // Single-line address (no forced <br/>)
+  return [street, tail].filter(Boolean).join(" • ");
 }
 
 function subjectAddressShort(property) {
@@ -596,11 +600,11 @@ function primaryButton(url, label) {
 
 function emailShell({ brandLine, heading, imgBlock, sectionsHtml, footerHtml, showingId }) {
   return `
-  <div style="background:#f6f6f7;padding:14px;">
-    <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:16px;padding:14px;box-shadow:0 8px 24px rgba(0,0,0,0.06);">
+  <div style="background:#f6f6f7;padding:8px;">
+    <div style="width:100%;max-width:680px;margin:0 auto;background:#ffffff;border-radius:16px;padding:12px;box-shadow:0 8px 24px rgba(0,0,0,0.06);box-sizing:border-box;">
       <div style="font-family:Arial,Helvetica,sans-serif;color:#111;">
-        ${brandLine ? `<div style="font-size:13px;color:#555;margin-bottom:8px;">${escapeHtml(brandLine)}</div>` : ""}
-        <h1 style="margin:0 0 16px 0;font-size:22px;line-height:1.2;">${escapeHtml(heading)}</h1>
+        ${brandLine ? `<div style="font-size:13px;color:#555;margin-bottom:10px;">${escapeHtml(brandLine)}</div>` : ""}
+        <h1 style="margin:0 0 14px 0;font-size:22px;line-height:1.25;">${escapeHtml(heading)}</h1>
 
         ${imgBlock || ""}
 
@@ -608,7 +612,7 @@ function emailShell({ brandLine, heading, imgBlock, sectionsHtml, footerHtml, sh
 
         ${footerHtml || ""}
 
-        ${showingId ? `<div style="font-size:12px;color:#999;margin-top:18px;">Showing ID: ${escapeHtml(showingId)}</div>` : ""}
+        ${showingId ? `<div style="font-size:12px;color:#999;margin-top:16px;">Showing ID: ${escapeHtml(showingId)}</div>` : ""}
       </div>
     </div>
   </div>
