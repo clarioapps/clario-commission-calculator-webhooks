@@ -111,13 +111,14 @@ async function sendEmail({ to, subject, html }) {
   else if (typeof to === "string") recipientsRaw = [to];
 
   let recipients = recipientsRaw
+    .flatMap((x) => String(x == null ? "" : x).split(/[;,]/g))
     .map((x) => String(x == null ? "" : x).trim())
     .filter(Boolean);
 
   // Defensive: if callers forget recipients, fall back to ADMIN_EMAIL when available.
   if (recipients.length === 0 && ADMIN_EMAIL) {
     const admin = String(ADMIN_EMAIL || "").trim();
-    if (admin) recipients = [admin];
+    if (admin) recipients = admin.split(/[;,]/g).map((s) => s.trim()).filter(Boolean);
   }
 
   if (recipients.length === 0) {
@@ -145,7 +146,6 @@ async function sendEmail({ to, subject, html }) {
     throw err; // so your endpoint returns 500 on failure (no more false "ok")
   }
 }
-
 
 function isoOrNA(v) {
   if (!v) return "N/A";
