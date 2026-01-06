@@ -105,22 +105,47 @@ async function sendEmail({ to, subject, html }) {
     return;
   }
 
-  // Defensive: if callers forget recipients, fall back to ADMIN_EMAIL when available.
-  let recipients = Array.isArray(to) ? to.filter(Boolean) : [];
-  if (recipients.length === 0 && ADMIN_EMAIL) recipients = [ADMIN_EMAIL];
+  // Normalize/trim recipients. Resend is strict.
+  let recipientsRaw = [];
+  if (Array.isArray(to)) recipientsRaw = to;
+  else if (typeof to === "string") recipientsRaw = [to];
 
-  if (!recipients || recipients.length === 0) {
+  let recipients = recipientsRaw
+    .map((x) => String(x == null ? "" : x).trim())
+    .filter(Boolean);
+
+  // Defensive: if callers forget recipients, fall back to ADMIN_EMAIL when available.
+  if (recipients.length === 0 && ADMIN_EMAIL) {
+    const admin = String(ADMIN_EMAIL || "").trim();
+    if (admin) recipients = [admin];
+  }
+
+  if (recipients.length === 0) {
     console.warn("⚠️ No recipients provided and ADMIN_EMAIL not set – skipping email.");
     return;
   }
 
   try {
-    const result = await resend.emails.send({ from: FROM_EMAIL, to: recipients, subject, html });
+    const result = await resend.emails.send({
+      from: FROM_EMAIL,
+      to: recipients,
+      subject,
+      html,
+    });
+
+    // Resend returns { data, error }. Treat error as failure.
+    if (result && result.error) {
+      console.error("❌ Resend validation/send error:", result.error);
+      throw new Error(result.error.message || "Resend error");
+    }
+
     console.log("📧 Email sent:", result);
   } catch (err) {
     console.error("❌ Failed to send email:", err);
+    throw err; // so your endpoint returns 500 on failure (no more false "ok")
   }
 }
+
 
 function isoOrNA(v) {
   if (!v) return "N/A";
