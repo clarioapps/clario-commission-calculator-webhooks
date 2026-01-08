@@ -454,18 +454,6 @@ const EMAIL_COPY = {
     rescheduleBtn: "Pick a different time",
     contactLinePrefix: "Need help?",
     cancelRescheduleLine: "If you need to cancel or reschedule, contact the agent directly.",
-
-    // Buyer reminders (24h only)
-    subjectReminder24hPrefix: "Reminder: Your showing is tomorrow",
-    headingReminder24h: "Showing reminder (24 hours)",
-    reminderIntro24h: "This is a reminder about your upcoming showing.",
-    agentContact: "Agent Contact",
-
-    // Agent reminders (24h only)
-    subjectAgentReminder24hPrefix: "Reminder: Showing tomorrow",
-    agentReminderHeading24h: "Showing reminder (24 hours)",
-    dashboardOnlyNote:
-      "You can manage this showing from your dashboard. (The Manage Showing link is no longer valid after approve/decline.)",
   },
   es: {
     subjectNew: "Nueva solicitud de visita",
@@ -496,18 +484,6 @@ const EMAIL_COPY = {
     rescheduleBtn: "Elegir otra hora",
     contactLinePrefix: "¿Necesitas ayuda?",
     cancelRescheduleLine: "Si necesitas cancelar o reprogramar, contacta al agente.",
-
-    // Buyer reminders (24h only)
-    subjectReminder24hPrefix: "Recordatorio: tu visita es mañana",
-    headingReminder24h: "Recordatorio (24 horas)",
-    reminderIntro24h: "Este es un recordatorio de tu visita.",
-    agentContact: "Contacto del agente",
-
-    // Agent reminders (24h only)
-    subjectAgentReminder24hPrefix: "Recordatorio: visita mañana",
-    agentReminderHeading24h: "Recordatorio (24 horas)",
-    dashboardOnlyNote:
-      "Puedes gestionar esta visita desde tu panel. (El enlace de administrar ya no es válido después de aprobar/rechazar.)",
   },
 };
 
@@ -825,7 +801,7 @@ function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, b
   const agentContactLine = (agentName || agentPhone || agentEmail)
     ? `
       <div style="margin-top:10px;font-size:14px;line-height:1.6;">
-        <div><strong>${escapeHtml(c.agentContact)}:</strong> ${escapeHtml(agentName || "Agent")}</div>
+        <div><strong>Agent Contact:</strong> ${escapeHtml(agentName || "Agent")}</div>
         ${agentPhone ? `<div>${escapeHtml(agentPhone)}</div>` : ""}
         ${agentEmail ? `<div><a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a></div>` : ""}
       </div>
@@ -877,151 +853,6 @@ function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, b
         ${escapeHtml(c.contactLinePrefix)} ${escapeHtml(agentName || "the agent")}
         ${agentPhone ? ` at ${escapeHtml(agentPhone)}` : ""}${agentEmail ? ` or <a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a>` : ""}.
       </div>` : ""}
-  `.trim();
-
-  return emailShell({
-    brandLine,
-    heading,
-    imgBlock,
-    sectionsHtml: sections,
-    footerHtml: "",
-    showingId: showing?.id || "",
-  });
-}
-
-function buildBuyerReminderEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, timeZone, reminderType, agent }) {
-  const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
-
-  const brandLine = brokerageName || agentName || "Showing Scheduler";
-  const addressHtml = formatAddress(property);
-
-  const imgUrl = wixImageToPublicUrl(property?.image);
-  const imgBlock = imgUrl
-    ? `<img src="${escapeHtml(imgUrl)}" alt="Property" style="width:100%;max-width:560px;border-radius:12px;display:block;margin:0 auto 16px auto;" />`
-    : "";
-
-  const buyerFirst = String(buyer?.firstName || "").trim();
-  const greetingName = buyerFirst || "there";
-
-  const tz =
-    String(
-      (property && property.timeZone) ||
-      (showing && showing.propertyTimeZoneSnapshot) ||
-      timeZone ||
-      "America/New_York"
-    ).trim() || "America/New_York";
-
-  const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
-
-  // 24h only
-  const heading = c.headingReminder24h;
-  const intro = c.reminderIntro24h;
-
-  const agentPhone = String(agent?.phone || "").trim();
-  const agentEmail = String(agent?.email || "").trim();
-
-  const agentContactBlock = (agentName || agentPhone || agentEmail)
-    ? `
-      <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-top:14px;">
-        <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.agentContact)}</div>
-        <div style="font-size:14px;line-height:1.6;">
-          <div>${escapeHtml(agentName || "Agent")}</div>
-          ${agentPhone ? `<div>${escapeHtml(agentPhone)}</div>` : ""}
-          ${agentEmail ? `<div><a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a></div>` : ""}
-        </div>
-      </div>
-    `.trim()
-    : "";
-
-  const sections = `
-    <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
-      <div style="font-weight:700;margin-bottom:6px;">${escapeHtml(heading)}</div>
-      <div>Hi ${escapeHtml(greetingName)},</div>
-      <div>${escapeHtml(intro)}</div>
-    </div>
-
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.property)}</div>
-      <div style="font-size:14px;line-height:1.4;">${addressHtml || "—"}</div>
-    </div>
-
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">Time (Property Time)</div>
-      <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
-    </div>
-
-    ${agentContactBlock}
-
-    <div style="margin-top:12px;font-size:13px;color:#111;">
-      ${escapeHtml(c.cancelRescheduleLine)}
-    </div>
-  `.trim();
-
-  return emailShell({
-    brandLine,
-    heading,
-    imgBlock,
-    sectionsHtml: sections,
-    footerHtml: "",
-    showingId: showing?.id || "",
-  });
-}
-
-function buildAgentReminderEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, timeZone, reminderType }) {
-  const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
-
-  const brandLine = brokerageName || agentName || "Showing Scheduler";
-  const addressHtml = formatAddress(property);
-
-  const imgUrl = wixImageToPublicUrl(property?.image);
-  const imgBlock = imgUrl
-    ? `<img src="${escapeHtml(imgUrl)}" alt="Property" style="width:100%;max-width:560px;border-radius:12px;display:block;margin:0 auto 16px auto;" />`
-    : "";
-
-  const tz =
-    String(
-      (property && property.timeZone) ||
-      (showing && showing.propertyTimeZoneSnapshot) ||
-      timeZone ||
-      "America/New_York"
-    ).trim() || "America/New_York";
-
-  const scheduledText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
-
-  const buyerName = [buyer?.firstName, buyer?.lastName].filter(Boolean).join(" ").trim();
-  const buyerEmail = buyer?.email || "";
-  const buyerPhone = buyer?.phone || "";
-
-  // 24h only
-  const heading = c.agentReminderHeading24h;
-
-  const sections = `
-    <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
-      <div style="font-weight:700;margin-bottom:6px;">${escapeHtml(heading)}</div>
-    </div>
-
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.property)}</div>
-      <div style="font-size:14px;line-height:1.4;">${addressHtml || "—"}</div>
-    </div>
-
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.scheduledTime)}</div>
-      <div style="font-size:14px;line-height:1.4;">${escapeHtml(scheduledText || "—")}</div>
-    </div>
-
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.buyer)}</div>
-      <div style="font-size:14px;line-height:1.6;">
-        <div>${escapeHtml(buyerName || "—")}</div>
-        ${buyerEmail ? `<div><a href="mailto:${escapeHtml(buyerEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(buyerEmail)}</a></div>` : ""}
-        ${buyerPhone ? `<div>${escapeHtml(buyerPhone)}</div>` : ""}
-      </div>
-    </div>
-
-    <div style="margin-top:10px;font-size:13px;color:#111;">
-      ${escapeHtml(c.dashboardOnlyNote)}
-    </div>
   `.trim();
 
   return emailShell({
@@ -1167,7 +998,7 @@ app.post("/showings/buyer-status", async (req, res) => {
   }
 });
 
-/* ───────────────────── NEW: /showings/buyer-received ───────────────────── */
+/* ───────────────────── /showings/buyer-received ───────────────────── */
 
 app.post("/showings/buyer-received", async (req, res) => {
   try {
@@ -1214,220 +1045,6 @@ app.post("/showings/buyer-received", async (req, res) => {
     return res.status(200).send("ok");
   } catch (err) {
     console.error("❌ /showings/buyer-received failed:", err);
-    return res.status(500).send("error");
-  }
-});
-
-/* ───────────────────── NEW: Buyer reminders (explicit endpoint, 24h only) ───────────────────── */
-
-app.post("/showings/buyer-reminder-24h", async (req, res) => {
-  try {
-    if (!isAuthorized(req)) return res.status(401).send("unauthorized");
-
-    const body = req.body || {};
-    const lang = normalizeLang(body.language);
-
-    const brokerageName = body.brokerageName || "";
-    const agentName = body.agentName || "";
-
-    const property = body.property || {};
-    const buyer = body.buyer || {};
-    const showing = body.showing || {};
-    const agent = body.agent || {}; // in your triggerBuyerReminderCore payload
-
-    const timeZone =
-      body.timeZone ||
-      property.timeZone ||
-      showing.propertyTimeZoneSnapshot ||
-      "America/New_York";
-
-    // FIX: allow buyer.email OR body.to for testing; sendEmail() will extract valid emails only
-    const buyerEmail = (buyer && buyer.email) ? String(buyer.email).trim() : "";
-    let to = [];
-    if (buyerEmail) to = [buyerEmail];
-    else if (Array.isArray(body.to)) to = body.to.filter(Boolean);
-
-    const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
-    const subject = `${c.subjectReminder24hPrefix} — ${subjectAddressShort(property)}`;
-
-    const html = buildBuyerReminderEmailHtml({
-      lang,
-      brokerageName,
-      agentName,
-      property,
-      buyer,
-      showing,
-      timeZone,
-      reminderType: "24h",
-      agent,
-    });
-
-    const replyTo = String(agent?.email || body.agentEmail || body.agent_email || "").trim();
-    const fromName = brokerageName || agentName || "Showing Scheduler";
-
-    await sendEmail({ to, subject, html, fromName, replyTo });
-    return res.status(200).send("ok");
-  } catch (err) {
-    console.error("❌ /showings/buyer-reminder-24h failed:", err);
-    return res.status(500).send("error");
-  }
-});
-
-/* ───────────────────── NEW: Agent reminders (explicit endpoint, 24h only) ───────────────────── */
-
-app.post("/showings/agent-reminder-24h", async (req, res) => {
-  try {
-    if (!isAuthorized(req)) return res.status(401).send("unauthorized");
-
-    const body = req.body || {};
-    const lang = normalizeLang(body.language);
-
-    const brokerageName = body.brokerageName || "";
-    const agentName = body.agentName || "";
-
-    const property = body.property || {};
-    const buyer = body.buyer || {};
-    const showing = body.showing || {};
-
-    const timeZone =
-      body.timeZone ||
-      property.timeZone ||
-      showing.propertyTimeZoneSnapshot ||
-      "America/New_York";
-
-    // your triggerAgentReminderCore sends `to` array (agent email)
-    const to = Array.isArray(body.to) ? body.to.filter(Boolean) : [];
-
-    const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
-    const subject = `${c.subjectAgentReminder24hPrefix} — ${subjectAddressShort(property)}`;
-
-    const html = buildAgentReminderEmailHtml({
-      lang,
-      brokerageName,
-      agentName,
-      property,
-      buyer,
-      showing,
-      timeZone,
-      reminderType: "24h",
-    });
-
-    const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
-    const fromName = brokerageName || agentName || "Showing Scheduler";
-
-    await sendEmail({ to, subject, html, fromName, replyTo });
-    return res.status(200).send("ok");
-  } catch (err) {
-    console.error("❌ /showings/agent-reminder-24h failed:", err);
-    return res.status(500).send("error");
-  }
-});
-
-/* ───────────────────── REQUIRED by showings-reminders.jsw (hourly job) ─────────────────────
-   Your hourly job posts to:
-     - /showings/buyer-reminder
-     - /showings/agent-reminder
-   This server now supports 24h reminders ONLY.
-*/
-
-app.post("/showings/buyer-reminder", async (req, res) => {
-  try {
-    if (!isAuthorized(req)) return res.status(401).send("unauthorized");
-
-    // 24h only (ignore any reminderType provided)
-    const body = req.body || {};
-    const lang = normalizeLang(body.language);
-
-    const brokerageName = body.brokerageName || "";
-    const agentName = body.agentName || "";
-
-    const property = body.property || {};
-    const buyer = body.buyer || {};
-    const showing = body.showing || {};
-    const agent = body.agent || {};
-
-    const timeZone =
-      body.timeZone ||
-      property.timeZone ||
-      showing.propertyTimeZoneSnapshot ||
-      "America/New_York";
-
-    // FIX: allow buyer.email OR body.to for testing; sendEmail() will extract valid emails only
-    const buyerEmail = (buyer && buyer.email) ? String(buyer.email).trim() : "";
-    let to = [];
-    if (buyerEmail) to = [buyerEmail];
-    else if (Array.isArray(body.to)) to = body.to.filter(Boolean);
-
-    const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
-    const subject = `${c.subjectReminder24hPrefix} — ${subjectAddressShort(property)}`;
-
-    const html = buildBuyerReminderEmailHtml({
-      lang,
-      brokerageName,
-      agentName,
-      property,
-      buyer,
-      showing,
-      timeZone,
-      reminderType: "24h",
-      agent,
-    });
-
-    const replyTo = String(agent?.email || body.agentEmail || body.agent_email || "").trim();
-    const fromName = brokerageName || agentName || "Showing Scheduler";
-
-    await sendEmail({ to, subject, html, fromName, replyTo });
-    return res.status(200).send("ok");
-  } catch (err) {
-    console.error("❌ /showings/buyer-reminder failed:", err);
-    return res.status(500).send("error");
-  }
-});
-
-app.post("/showings/agent-reminder", async (req, res) => {
-  try {
-    if (!isAuthorized(req)) return res.status(401).send("unauthorized");
-
-    const body = req.body || {};
-    const lang = normalizeLang(body.language);
-
-    const brokerageName = body.brokerageName || "";
-    const agentName = body.agentName || "";
-
-    const property = body.property || {};
-    const buyer = body.buyer || {};
-    const showing = body.showing || {};
-
-    const timeZone =
-      body.timeZone ||
-      property.timeZone ||
-      showing.propertyTimeZoneSnapshot ||
-      "America/New_York";
-
-    // hourly job sends `to: [agentEmail]`
-    const to = Array.isArray(body.to) ? body.to.filter(Boolean) : [];
-
-    const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
-    const subject = `${c.subjectAgentReminder24hPrefix} — ${subjectAddressShort(property)}`;
-
-    const html = buildAgentReminderEmailHtml({
-      lang,
-      brokerageName,
-      agentName,
-      property,
-      buyer,
-      showing,
-      timeZone,
-      reminderType: "24h",
-    });
-
-    const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
-    const fromName = brokerageName || agentName || "Showing Scheduler";
-
-    await sendEmail({ to, subject, html, fromName, replyTo });
-    return res.status(200).send("ok");
-  } catch (err) {
-    console.error("❌ /showings/agent-reminder failed:", err);
     return res.status(500).send("error");
   }
 });
