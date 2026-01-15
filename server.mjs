@@ -11,8 +11,20 @@ const app = express();
    - Webhook routes need RAW TEXT.
    - Our custom routes need JSON.
 */
-app.use(express.json({ limit: "1mb" }));
+const jsonParser = express.json({ limit: "1mb" });
 const rawText = express.text({ type: "*/*" });
+
+// ✅ FIX: ensure webhooks receive RAW TEXT even if Wix sends application/json
+app.use((req, res, next) => {
+  if (
+    req.path === "/webhook" ||
+    req.path === "/webhook-kpi" ||
+    req.path === "/webhook-mortgage"
+  ) {
+    return rawText(req, res, next);
+  }
+  return jsonParser(req, res, next);
+});
 
 /* ───────────────────── Wix App IDs & Public Keys ───────────────────── */
 
@@ -1085,7 +1097,7 @@ app.post("/showings/buyer-received", async (req, res) => {
 
 /* ───────────────────── Webhooks ───────────────────── */
 
-app.post("/webhook", rawText, async (req, res) => {
+app.post("/webhook", async (req, res) => {
   console.log("===== [Commission Calculator] Webhook received =====");
   console.log("Raw body:", req.body);
 
@@ -1114,7 +1126,7 @@ app.post("/webhook", rawText, async (req, res) => {
   res.status(200).send("ok");
 });
 
-app.post("/webhook-kpi", rawText, async (req, res) => {
+app.post("/webhook-kpi", async (req, res) => {
   console.log("===== [Transactions KPI] Webhook received =====");
   console.log("Raw body:", req.body);
 
@@ -1143,7 +1155,7 @@ app.post("/webhook-kpi", rawText, async (req, res) => {
   res.status(200).send("ok");
 });
 
-app.post("/webhook-mortgage", rawText, async (req, res) => {
+app.post("/webhook-mortgage", async (req, res) => {
   console.log("===== [Mortgage] Webhook received =====");
   console.log("Raw body:", req.body);
 
