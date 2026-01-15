@@ -880,12 +880,28 @@ function isAuthorized(req) {
     "";
 
   const got = req.headers["x-clario-secret"] || "";
-  return !!expected && String(got) === String(expected);
+  const ok = !!expected && String(got) === String(expected);
+
+  if (!ok) {
+    console.log("[ShowingsRoute] unauthorized", {
+      path: req.path || "",
+      gotLen: String(got || "").length,
+      expectedSet: !!expected,
+    });
+  }
+
+  return ok;
 }
 
 /* ───────────────────── /showings/new-request ───────────────────── */
 
 app.post("/showings/new-request", async (req, res) => {
+  console.log("[ShowingsRoute] hit /showings/new-request", {
+    reqId: req.headers["x-clario-reqid"] || "",
+    hasBody: !!req.body,
+    contentType: req.headers["content-type"] || "",
+  });
+
   try {
     if (!isAuthorized(req)) {
       return res.status(401).send("unauthorized");
@@ -939,6 +955,12 @@ app.post("/showings/new-request", async (req, res) => {
 /* ───────────────────── /showings/buyer-status ───────────────────── */
 
 app.post("/showings/buyer-status", async (req, res) => {
+  console.log("[ShowingsRoute] hit /showings/buyer-status", {
+    reqId: req.headers["x-clario-reqid"] || "",
+    hasBody: !!req.body,
+    contentType: req.headers["content-type"] || "",
+  });
+
   try {
     if (!isAuthorized(req)) {
       return res.status(401).send("unauthorized");
@@ -1007,6 +1029,12 @@ app.post("/showings/buyer-status", async (req, res) => {
 /* ───────────────────── /showings/buyer-received ───────────────────── */
 
 app.post("/showings/buyer-received", async (req, res) => {
+  console.log("[ShowingsRoute] hit /showings/buyer-received", {
+    reqId: req.headers["x-clario-reqid"] || "",
+    hasBody: !!req.body,
+    contentType: req.headers["content-type"] || "",
+  });
+
   try {
     if (!isAuthorized(req)) {
       return res.status(401).send("unauthorized");
