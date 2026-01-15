@@ -14,6 +14,25 @@ const app = express();
 app.use(express.json({ limit: "1mb" }));
 const rawText = express.text({ type: "*/*" });
 
+/* ───────────────────── Showings Route Diagnostics (TEMP) ─────────────────────
+   Logs inbound /showings traffic + auth decision + resend send attempts
+--------------------------------------------------------------------------- */
+app.use("/showings", (req, _res, next) => {
+  try {
+    console.log("[ShowingsRoute] INBOUND", {
+      method: req.method,
+      path: req.path,
+      contentType: req.headers["content-type"] || "",
+      reqId: req.headers["x-clario-reqid"] || "",
+      hasBody: !!req.body,
+      bodyKeys: req.body && typeof req.body === "object" ? Object.keys(req.body) : [],
+    });
+  } catch (e) {
+    console.log("[ShowingsRoute] INBOUND log failed:", e);
+  }
+  next();
+});
+
 /* ───────────────────── Wix App IDs & Public Keys ───────────────────── */
 
 // Commission Calculator
@@ -178,6 +197,13 @@ async function sendEmail({ to, subject, html, fromName, replyTo }) {
   const replyToHeader = looksLikeEmail(replyToEmail) ? replyToEmail : undefined;
 
   try {
+    console.log("🚀 Resend SEND attempt:", {
+      to: emails,
+      subject,
+      from: finalFrom,
+      replyTo: replyToHeader || "",
+    });
+
     const result = await resend.emails.send({
       from: finalFrom,
       to: emails,
@@ -894,14 +920,35 @@ function isAuthorized(req) {
     process.env.CLARIO_SHOWINGS_EMAIL_TOKEN || process.env.CLARIO_EMAIL_WEBHOOK_SECRET || "";
 
   const got = req.headers["x-clario-secret"] || "";
-  return !!expected && String(got) === String(expected);
+
+  const ok = !!expected && String(got) === String(expected);
+
+  try {
+    console.log("[ShowingsAuth] CHECK", {
+      ok,
+      expectedSet: !!expected,
+      expectedPrefix: expected ? String(expected).slice(0, 6) + "..." : "",
+      gotPrefix: got ? String(got).slice(0, 6) + "..." : "",
+      path: req.path,
+      reqId: req.headers["x-clario-reqid"] || "",
+    });
+  } catch (_e) {}
+
+  return ok;
 }
 
 /* ───────────────────── /showings/new-request ───────────────────── */
 
 app.post("/showings/new-request", async (req, res) => {
   try {
+    console.log("[ShowingsRoute] HANDLER START /showings/new-request", {
+      reqId: req.headers["x-clario-reqid"] || "",
+    });
+
     if (!isAuthorized(req)) {
+      console.log("[ShowingsRoute] UNAUTHORIZED /showings/new-request", {
+        reqId: req.headers["x-clario-reqid"] || "",
+      });
       return res.status(401).send("unauthorized");
     }
 
@@ -951,7 +998,14 @@ app.post("/showings/new-request", async (req, res) => {
 
 app.post("/showings/buyer-status", async (req, res) => {
   try {
+    console.log("[ShowingsRoute] HANDLER START /showings/buyer-status", {
+      reqId: req.headers["x-clario-reqid"] || "",
+    });
+
     if (!isAuthorized(req)) {
+      console.log("[ShowingsRoute] UNAUTHORIZED /showings/buyer-status", {
+        reqId: req.headers["x-clario-reqid"] || "",
+      });
       return res.status(401).send("unauthorized");
     }
 
@@ -1013,7 +1067,14 @@ app.post("/showings/buyer-status", async (req, res) => {
 
 app.post("/showings/buyer-received", async (req, res) => {
   try {
+    console.log("[ShowingsRoute] HANDLER START /showings/buyer-received", {
+      reqId: req.headers["x-clario-reqid"] || "",
+    });
+
     if (!isAuthorized(req)) {
+      console.log("[ShowingsRoute] UNAUTHORIZED /showings/buyer-received", {
+        reqId: req.headers["x-clario-reqid"] || "",
+      });
       return res.status(401).send("unauthorized");
     }
 
