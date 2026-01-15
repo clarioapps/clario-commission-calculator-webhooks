@@ -11,20 +11,8 @@ const app = express();
    - Webhook routes need RAW TEXT.
    - Our custom routes need JSON.
 */
-const jsonParser = express.json({ limit: "1mb" });
+app.use(express.json({ limit: "1mb" }));
 const rawText = express.text({ type: "*/*" });
-
-// ✅ FIX: ensure webhooks receive RAW TEXT even if Wix sends application/json
-app.use((req, res, next) => {
-  if (
-    req.path === "/webhook" ||
-    req.path === "/webhook-kpi" ||
-    req.path === "/webhook-mortgage"
-  ) {
-    return rawText(req, res, next);
-  }
-  return jsonParser(req, res, next);
-});
 
 /* ───────────────────── Wix App IDs & Public Keys ───────────────────── */
 
@@ -77,8 +65,8 @@ NQIDAQAB
   (Optional legacy fallback) CLARIO_EMAIL_WEBHOOK_SECRET
 ----------------------------------------------------------------------- */
 
-const COMM_APP_SECRET     = process.env.COMM_APP_SECRET     || "";
-const KPI_APP_SECRET      = process.env.KPI_APP_SECRET      || "";
+const COMM_APP_SECRET = process.env.COMM_APP_SECRET || "";
+const KPI_APP_SECRET = process.env.KPI_APP_SECRET || "";
 const MORTGAGE_APP_SECRET = process.env.MORTGAGE_APP_SECRET || "";
 
 /* ───────────────────── Verifier Clients (public key only) ───────────────────── */
@@ -111,14 +99,8 @@ function clientForInstance(appId, appSecret, instanceId) {
 
 const resend = new Resend(process.env.RESEND_API_KEY);
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "";
-const FROM_EMAIL  = process.env.FROM_EMAIL  || "Clario Apps <wecare@clarioapps.net>";
+const FROM_EMAIL = process.env.FROM_EMAIL || "Clario Apps <wecare@clarioapps.net>";
 
-/* ================================================================
- * Recipient normalization (FIXES Resend 422 Invalid `to`)
- * - Accepts: "email@x.com", "Name <email@x.com>", "foo@x.com; bar@y.com"
- * - Extracts valid emails, dedupes, and ONLY sends valid emails to Resend.
- * - If no valid emails can be found, throws a clear error (so endpoint returns 500).
- * ================================================================ */
 function extractValidEmails(input) {
   const emailRegex = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi;
   const s = String(input == null ? "" : input);
@@ -132,23 +114,18 @@ function normalizeRecipients(to) {
   if (Array.isArray(to)) raw.push(...to);
   else if (typeof to === "string") raw.push(to);
 
-  // If caller forgot, let ADMIN_EMAIL try to supply recipients (but still must be valid emails)
+  // Defensive fallback to ADMIN_EMAIL like the old server
   if (raw.length === 0 && ADMIN_EMAIL) raw.push(ADMIN_EMAIL);
 
-  // Split on common separators and extract emails
   let emails = raw
     .flatMap((item) => String(item == null ? "" : item).split(/[;,]/g))
     .flatMap((part) => extractValidEmails(part));
 
-  // Dedupe
   emails = Array.from(new Set(emails));
 
   return { raw, emails };
 }
 
-/* ================================================================
- * FROM display name + Reply-To support (keeps FROM email on verified domain)
- * ================================================================ */
 function sanitizeFromName(name) {
   return String(name || "")
     .replace(/[<>]/g, "")
@@ -183,46 +160,50 @@ async function sendEmail({ to, subject, html, fromName, replyTo }) {
   console.log("📩 sendEmail raw recipients:", raw);
   console.log("📩 sendEmail normalized emails:", emails);
 
-  if (emails.length === 0) {
-    throw new Error(
-      `No valid recipient emails found. to=${JSON.stringify(to)} ADMIN_EMAIL=${JSON.stringify(ADMIN_EMAIL)}`
+  if (!emails || emails.length === 0) {
+    console.warn(
+      "⚠️ No valid recipients found (skipping). to=",
+      JSON.stringify(to),
+      " ADMIN_EMAIL=",
+      JSON.stringify(ADMIN_EMAIL)
     );
+    return;
   }
 
-  // Keep the FROM email address on your verified domain; vary only display name.
   const fromEmailOnly = extractEmailOnly(FROM_EMAIL);
   const finalFromName = sanitizeFromName(fromName) || sanitizeFromName("Clario Apps");
   const finalFrom = `${finalFromName} <${fromEmailOnly}>`;
 
-  // Reply-To can be agent email (if valid)
   const replyToEmail = String(replyTo || "").trim();
   const replyToHeader = looksLikeEmail(replyToEmail) ? replyToEmail : undefined;
 
   try {
     const result = await resend.emails.send({
       from: finalFrom,
-      to: emails, // ONLY valid emails
+      to: emails,
       subject,
       html,
       ...(replyToHeader ? { reply_to: replyToHeader } : {}),
     });
 
-    // Resend returns { data, error }. Treat error as failure.
     if (result && result.error) {
-      console.error("❌ Resend validation/send error:", result.error);
-      throw new Error(result.error.message || "Resend error");
+      console.error("❌ Resend error:", result.error);
+      return;
     }
 
     console.log("📧 Email sent:", result);
   } catch (err) {
     console.error("❌ Failed to send email:", err);
-    throw err; // so your endpoint returns 500 on failure (no more false "ok")
   }
 }
 
 function isoOrNA(v) {
   if (!v) return "N/A";
-  try { return new Date(v).toISOString(); } catch { return String(v); }
+  try {
+    return new Date(v).toISOString();
+  } catch {
+    return String(v);
+  }
 }
 
 /* ───────────────────── Fetch Extra Instance Details (existing) ───────────────────── */
@@ -231,11 +212,14 @@ async function fetchInstanceDetails(appKey, instanceId) {
   try {
     let appId, appSecret;
     if (appKey === "commission") {
-      appId = COMM_APP_ID; appSecret = COMM_APP_SECRET;
+      appId = COMM_APP_ID;
+      appSecret = COMM_APP_SECRET;
     } else if (appKey === "kpi") {
-      appId = KPI_APP_ID; appSecret = KPI_APP_SECRET;
+      appId = KPI_APP_ID;
+      appSecret = KPI_APP_SECRET;
     } else {
-      appId = MORTGAGE_APP_ID; appSecret = MORTGAGE_APP_SECRET;
+      appId = MORTGAGE_APP_ID;
+      appSecret = MORTGAGE_APP_SECRET;
     }
 
     if (!appSecret) {
@@ -264,16 +248,9 @@ async function fetchInstanceDetails(appKey, instanceId) {
 
     const siteBlock = ai?.site || ai?.appInstance?.site;
     const ownerEmail =
-      siteBlock?.ownerInfo?.email ||
-      ai?.ownerEmail ||
-      ai?.appInstance?.ownerEmail ||
-      "N/A";
+      siteBlock?.ownerInfo?.email || ai?.ownerEmail || ai?.appInstance?.ownerEmail || "N/A";
 
-    const siteId =
-      siteBlock?.metaSiteId ||
-      ai?.siteId ||
-      ai?.metaSiteId ||
-      "N/A";
+    const siteId = siteBlock?.metaSiteId || ai?.siteId || ai?.metaSiteId || "N/A";
 
     const props = sp?.properties || {};
     const siteName = props.siteDisplayName || "N/A";
@@ -535,7 +512,6 @@ function formatAddress(p) {
   const line2 = [city, state].filter(Boolean).join(", ");
   const tail = [line2, zip].filter(Boolean).join(" ");
 
-  // Single-line address (no forced <br/>)
   return [street, tail].filter(Boolean).join(" • ");
 }
 
@@ -544,30 +520,6 @@ function subjectAddressShort(property) {
   const city = String(property?.city || "").trim();
   if (street && city) return `${street}, ${city}`;
   return street || city || "Property";
-}
-
-function safeDisplayTimeOnlyProperty({ showing, timeZone, lang }) {
-  // Your backend already sets requestedStartDisplayCombined to property-time for buyer flows.
-  // For agent/admin, we still prefer requestedStartDisplayProperty (single TZ) and fall back.
-  const tzFallback = String(timeZone || showing?.propertyTimeZoneSnapshot || "America/New_York").trim() || "America/New_York";
-  const displayProperty = String(showing?.requestedStartDisplayProperty || "").trim();
-  const displayCombined = String(showing?.requestedStartDisplayCombined || "").trim();
-
-  if (displayProperty) return displayProperty;
-  if (displayCombined) return displayCombined;
-
-  const whenText = formatInTimeZone(
-    showing?.requestedStart ||
-    showing?.requestedStartUtc ||
-    showing?.slotStart ||
-    showing?.start ||
-    showing?.startTime ||
-    showing?.dateTime,
-    tzFallback,
-    lang
-  );
-
-  return whenText || "—";
 }
 
 function localeForLang(lang) {
@@ -613,6 +565,31 @@ function formatInTimeZone(dateValue, timeZone, lang) {
   } catch (_e) {
     return d.toISOString();
   }
+}
+
+function safeDisplayTimeOnlyProperty({ showing, timeZone, lang }) {
+  const tzFallback =
+    String(timeZone || showing?.propertyTimeZoneSnapshot || "America/New_York").trim() ||
+    "America/New_York";
+
+  const displayProperty = String(showing?.requestedStartDisplayProperty || "").trim();
+  const displayCombined = String(showing?.requestedStartDisplayCombined || "").trim();
+
+  if (displayProperty) return displayProperty;
+  if (displayCombined) return displayCombined;
+
+  const whenText = formatInTimeZone(
+    showing?.requestedStart ||
+      showing?.requestedStartUtc ||
+      showing?.slotStart ||
+      showing?.start ||
+      showing?.startTime ||
+      showing?.dateTime,
+    tzFallback,
+    lang
+  );
+
+  return whenText || "—";
 }
 
 function primaryButton(url, label) {
@@ -665,9 +642,9 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
   const tz =
     String(
       (property && property.timeZone) ||
-      (showing && showing.propertyTimeZoneSnapshot) ||
-      timeZone ||
-      "America/New_York"
+        (showing && showing.propertyTimeZoneSnapshot) ||
+        timeZone ||
+        "America/New_York"
     ).trim() || "America/New_York";
 
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
@@ -699,11 +676,15 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
       ${primaryButton(manageUrl, c.manage)}
     </div>
 
-    ${fallbackUrl ? `
+    ${
+      fallbackUrl
+        ? `
       <div style="font-size:12px;color:#666;margin-top:10px;">
         ${escapeHtml(c.fallbackLinkNote)}<br/>
         <a href="${escapeHtml(fallbackUrl)}">${escapeHtml(fallbackUrl)}</a>
-      </div>` : ""}
+      </div>`
+        : ""
+    }
   `.trim();
 
   return emailShell({
@@ -733,9 +714,9 @@ function buildBuyerReceivedEmailHtml({ lang, brokerageName, agentName, property,
   const tz =
     String(
       (property && property.timeZone) ||
-      (showing && showing.propertyTimeZoneSnapshot) ||
-      timeZone ||
-      "America/New_York"
+        (showing && showing.propertyTimeZoneSnapshot) ||
+        timeZone ||
+        "America/New_York"
     ).trim() || "America/New_York";
 
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
@@ -782,7 +763,19 @@ function capFirst(s) {
   return v.charAt(0).toUpperCase() + v.slice(1).toLowerCase();
 }
 
-function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, status, declineReasonLabel, timeZone, links, agent }) {
+function buildBuyerStatusEmailHtml({
+  lang,
+  brokerageName,
+  agentName,
+  property,
+  buyer,
+  showing,
+  status,
+  declineReasonLabel,
+  timeZone,
+  links,
+  agent,
+}) {
   const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
 
   const brandLine = brokerageName || agentName || "Showing Scheduler";
@@ -799,9 +792,9 @@ function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, b
   const tz =
     String(
       (property && property.timeZone) ||
-      (showing && showing.propertyTimeZoneSnapshot) ||
-      timeZone ||
-      "America/New_York"
+        (showing && showing.propertyTimeZoneSnapshot) ||
+        timeZone ||
+        "America/New_York"
     ).trim() || "America/New_York";
 
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
@@ -816,28 +809,31 @@ function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, b
 
   const agentPhone = String(agent?.phone || "").trim();
   const agentEmail = String(agent?.email || "").trim();
-  const agentContactLine = (agentName || agentPhone || agentEmail)
-    ? `
+  const agentContactLine =
+    agentName || agentPhone || agentEmail
+      ? `
       <div style="margin-top:10px;font-size:14px;line-height:1.6;">
         <div><strong>Agent Contact:</strong> ${escapeHtml(agentName || "Agent")}</div>
         ${agentPhone ? `<div>${escapeHtml(agentPhone)}</div>` : ""}
         ${agentEmail ? `<div><a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a></div>` : ""}
       </div>
     `.trim()
-    : "";
+      : "";
 
-  const reasonBlock = (!isApproved && String(declineReasonLabel || "").trim())
-    ? `
+  const reasonBlock =
+    !isApproved && String(declineReasonLabel || "").trim()
+      ? `
       <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
         <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.reasonLabel)}</div>
         <div style="font-size:14px;line-height:1.4;">${escapeHtml(declineReasonLabel)}</div>
       </div>
     `.trim()
-    : "";
+      : "";
 
-  const rescheduleBlock = (!isApproved && schedulerUrl)
-    ? `<div style="margin:14px 0 8px 0;">${primaryButton(schedulerUrl, c.rescheduleBtn)}</div>`
-    : "";
+  const rescheduleBlock =
+    !isApproved && schedulerUrl
+      ? `<div style="margin:14px 0 8px 0;">${primaryButton(schedulerUrl, c.rescheduleBtn)}</div>`
+      : "";
 
   const sections = `
     <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
@@ -859,18 +855,26 @@ function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, b
 
     ${agentContactLine ? agentContactLine : ""}
 
-    ${isApproved ? `
+    ${
+      isApproved
+        ? `
       <div style="margin-top:12px;font-size:13px;color:#111;">
         ${escapeHtml(c.cancelRescheduleLine)}
-      </div>` : ""}
+      </div>`
+        : ""
+    }
 
     ${rescheduleBlock}
 
-    ${(!isApproved && (agentPhone || agentEmail)) ? `
+    ${
+      !isApproved && (agentPhone || agentEmail)
+        ? `
       <div style="margin-top:10px;font-size:13px;color:#111;">
         ${escapeHtml(c.contactLinePrefix)} ${escapeHtml(agentName || "the agent")}
         ${agentPhone ? ` at ${escapeHtml(agentPhone)}` : ""}${agentEmail ? ` or <a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a>` : ""}.
-      </div>` : ""}
+      </div>`
+        : ""
+    }
   `.trim();
 
   return emailShell({
@@ -887,33 +891,15 @@ function buildBuyerStatusEmailHtml({ lang, brokerageName, agentName, property, b
 
 function isAuthorized(req) {
   const expected =
-    process.env.CLARIO_SHOWINGS_EMAIL_TOKEN ||
-    process.env.CLARIO_EMAIL_WEBHOOK_SECRET ||
-    "";
+    process.env.CLARIO_SHOWINGS_EMAIL_TOKEN || process.env.CLARIO_EMAIL_WEBHOOK_SECRET || "";
 
   const got = req.headers["x-clario-secret"] || "";
-  const ok = !!expected && String(got) === String(expected);
-
-  if (!ok) {
-    console.log("[ShowingsRoute] unauthorized", {
-      path: req.path || "",
-      gotLen: String(got || "").length,
-      expectedSet: !!expected,
-    });
-  }
-
-  return ok;
+  return !!expected && String(got) === String(expected);
 }
 
 /* ───────────────────── /showings/new-request ───────────────────── */
 
 app.post("/showings/new-request", async (req, res) => {
-  console.log("[ShowingsRoute] hit /showings/new-request", {
-    reqId: req.headers["x-clario-reqid"] || "",
-    hasBody: !!req.body,
-    contentType: req.headers["content-type"] || "",
-  });
-
   try {
     if (!isAuthorized(req)) {
       return res.status(401).send("unauthorized");
@@ -931,10 +917,7 @@ app.post("/showings/new-request", async (req, res) => {
     const links = body.links || {};
 
     const timeZone =
-      body.timeZone ||
-      property.timeZone ||
-      showing.propertyTimeZoneSnapshot ||
-      "America/New_York";
+      body.timeZone || property.timeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
 
     let to = Array.isArray(body.to) ? body.to.filter(Boolean) : [];
     if (to.length === 0 && ADMIN_EMAIL) to = [ADMIN_EMAIL];
@@ -967,12 +950,6 @@ app.post("/showings/new-request", async (req, res) => {
 /* ───────────────────── /showings/buyer-status ───────────────────── */
 
 app.post("/showings/buyer-status", async (req, res) => {
-  console.log("[ShowingsRoute] hit /showings/buyer-status", {
-    reqId: req.headers["x-clario-reqid"] || "",
-    hasBody: !!req.body,
-    contentType: req.headers["content-type"] || "",
-  });
-
   try {
     if (!isAuthorized(req)) {
       return res.status(401).send("unauthorized");
@@ -988,23 +965,17 @@ app.post("/showings/buyer-status", async (req, res) => {
     const buyer = body.buyer || {};
     const showing = body.showing || {};
     const links = body.links || {};
-    const agent = body.agent || {}; // optional
+    const agent = body.agent || {};
 
     const status = body.status || body.showingStatus || "";
     const declineReasonLabel =
-      body.declineReasonLabel ||
-      (body.declineReason && body.declineReason.label) ||
-      "";
+      body.declineReasonLabel || (body.declineReason && body.declineReason.label) || "";
 
     const timeZone =
-      body.timeZone ||
-      property.timeZone ||
-      showing.propertyTimeZoneSnapshot ||
-      "America/New_York";
+      body.timeZone || property.timeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
 
-    const buyerEmail = (buyer && buyer.email) ? String(buyer.email).trim() : "";
-    let to = [];
-    if (buyerEmail) to = [buyerEmail];
+    const buyerEmail = buyer && buyer.email ? String(buyer.email).trim() : "";
+    const to = buyerEmail ? [buyerEmail] : [];
 
     const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
     const statusNorm = capFirst(status);
@@ -1041,12 +1012,6 @@ app.post("/showings/buyer-status", async (req, res) => {
 /* ───────────────────── /showings/buyer-received ───────────────────── */
 
 app.post("/showings/buyer-received", async (req, res) => {
-  console.log("[ShowingsRoute] hit /showings/buyer-received", {
-    reqId: req.headers["x-clario-reqid"] || "",
-    hasBody: !!req.body,
-    contentType: req.headers["content-type"] || "",
-  });
-
   try {
     if (!isAuthorized(req)) {
       return res.status(401).send("unauthorized");
@@ -1063,12 +1028,9 @@ app.post("/showings/buyer-received", async (req, res) => {
     const showing = body.showing || {};
 
     const timeZone =
-      body.timeZone ||
-      property.timeZone ||
-      showing.propertyTimeZoneSnapshot ||
-      "America/New_York";
+      body.timeZone || property.timeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
 
-    const buyerEmail = (buyer && buyer.email) ? String(buyer.email).trim() : "";
+    const buyerEmail = buyer && buyer.email ? String(buyer.email).trim() : "";
     const to = buyerEmail ? [buyerEmail] : [];
 
     const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
@@ -1097,7 +1059,7 @@ app.post("/showings/buyer-received", async (req, res) => {
 
 /* ───────────────────── Webhooks ───────────────────── */
 
-app.post("/webhook", async (req, res) => {
+app.post("/webhook", rawText, async (req, res) => {
   console.log("===== [Commission Calculator] Webhook received =====");
   console.log("Raw body:", req.body);
 
@@ -1107,17 +1069,32 @@ app.post("/webhook", async (req, res) => {
 
     const appLabel = "Clario Commission Calculator";
     switch (event.eventType) {
-      case "AppInstalled":                 await handleAppInstalled(event, appLabel, "commission"); break;
-      case "PaidPlanPurchased":            await handlePaidPlanPurchased(event, appLabel, "commission"); break;
-      case "PaidPlanAutoRenewalCancelled": await handlePaidPlanAutoRenewalCancelled(event, appLabel, "commission"); break;
+      case "AppInstalled":
+        await handleAppInstalled(event, appLabel, "commission");
+        break;
+      case "PaidPlanPurchased":
+        await handlePaidPlanPurchased(event, appLabel, "commission");
+        break;
+      case "PaidPlanAutoRenewalCancelled":
+        await handlePaidPlanAutoRenewalCancelled(event, appLabel, "commission");
+        break;
       case "PaidPlanReactivated":
-      case "PlanReactivated":              await handlePaidPlanReactivated(event, appLabel, "commission"); break;
+      case "PlanReactivated":
+        await handlePaidPlanReactivated(event, appLabel, "commission");
+        break;
       case "PaidPlanConvertedToPaid":
-      case "PlanConvertedToPaid":          await handlePaidPlanConvertedToPaid(event, appLabel, "commission"); break;
+      case "PlanConvertedToPaid":
+        await handlePaidPlanConvertedToPaid(event, appLabel, "commission");
+        break;
       case "PaidPlanTransferred":
-      case "PlanTransferred":              await handlePaidPlanTransferred(event, appLabel, "commission"); break;
-      case "AppRemoved":                   await handleAppRemoved(event, appLabel, "commission"); break;
-      default: console.log("[Commission] Unhandled event type:", event.eventType);
+      case "PlanTransferred":
+        await handlePaidPlanTransferred(event, appLabel, "commission");
+        break;
+      case "AppRemoved":
+        await handleAppRemoved(event, appLabel, "commission");
+        break;
+      default:
+        console.log("[Commission] Unhandled event type:", event.eventType);
     }
   } catch (err) {
     console.error("[Commission] webhooks.process failed:", err);
@@ -1126,7 +1103,7 @@ app.post("/webhook", async (req, res) => {
   res.status(200).send("ok");
 });
 
-app.post("/webhook-kpi", async (req, res) => {
+app.post("/webhook-kpi", rawText, async (req, res) => {
   console.log("===== [Transactions KPI] Webhook received =====");
   console.log("Raw body:", req.body);
 
@@ -1136,17 +1113,32 @@ app.post("/webhook-kpi", async (req, res) => {
 
     const appLabel = "Clario Transactions KPI";
     switch (event.eventType) {
-      case "AppInstalled":                 await handleAppInstalled(event, appLabel, "kpi"); break;
-      case "PaidPlanPurchased":            await handlePaidPlanPurchased(event, appLabel, "kpi"); break;
-      case "PaidPlanAutoRenewalCancelled": await handlePaidPlanAutoRenewalCancelled(event, appLabel, "kpi"); break;
+      case "AppInstalled":
+        await handleAppInstalled(event, appLabel, "kpi");
+        break;
+      case "PaidPlanPurchased":
+        await handlePaidPlanPurchased(event, appLabel, "kpi");
+        break;
+      case "PaidPlanAutoRenewalCancelled":
+        await handlePaidPlanAutoRenewalCancelled(event, appLabel, "kpi");
+        break;
       case "PaidPlanReactivated":
-      case "PlanReactivated":              await handlePaidPlanReactivated(event, appLabel, "kpi"); break;
+      case "PlanReactivated":
+        await handlePaidPlanReactivated(event, appLabel, "kpi");
+        break;
       case "PaidPlanConvertedToPaid":
-      case "PlanConvertedToPaid":          await handlePaidPlanConvertedToPaid(event, appLabel, "kpi"); break;
+      case "PlanConvertedToPaid":
+        await handlePaidPlanConvertedToPaid(event, appLabel, "kpi");
+        break;
       case "PaidPlanTransferred":
-      case "PlanTransferred":              await handlePaidPlanTransferred(event, appLabel, "kpi"); break;
-      case "AppRemoved":                   await handleAppRemoved(event, appLabel, "kpi"); break;
-      default: console.log("[KPI] Unhandled event type:", event.eventType);
+      case "PlanTransferred":
+        await handlePaidPlanTransferred(event, appLabel, "kpi");
+        break;
+      case "AppRemoved":
+        await handleAppRemoved(event, appLabel, "kpi");
+        break;
+      default:
+        console.log("[KPI] Unhandled event type:", event.eventType);
     }
   } catch (err) {
     console.error("[KPI] webhooks.process failed:", err);
@@ -1155,7 +1147,7 @@ app.post("/webhook-kpi", async (req, res) => {
   res.status(200).send("ok");
 });
 
-app.post("/webhook-mortgage", async (req, res) => {
+app.post("/webhook-mortgage", rawText, async (req, res) => {
   console.log("===== [Mortgage] Webhook received =====");
   console.log("Raw body:", req.body);
 
@@ -1165,17 +1157,32 @@ app.post("/webhook-mortgage", async (req, res) => {
 
     const appLabel = "Clario 3-in-1 Mortgage Calculator";
     switch (event.eventType) {
-      case "AppInstalled":                 await handleAppInstalled(event, appLabel, "mortgage"); break;
-      case "PaidPlanPurchased":            await handlePaidPlanPurchased(event, appLabel, "mortgage"); break;
-      case "PaidPlanAutoRenewalCancelled": await handlePaidPlanAutoRenewalCancelled(event, appLabel, "mortgage"); break;
+      case "AppInstalled":
+        await handleAppInstalled(event, appLabel, "mortgage");
+        break;
+      case "PaidPlanPurchased":
+        await handlePaidPlanPurchased(event, appLabel, "mortgage");
+        break;
+      case "PaidPlanAutoRenewalCancelled":
+        await handlePaidPlanAutoRenewalCancelled(event, appLabel, "mortgage");
+        break;
       case "PaidPlanReactivated":
-      case "PlanReactivated":              await handlePaidPlanReactivated(event, appLabel, "mortgage"); break;
+      case "PlanReactivated":
+        await handlePaidPlanReactivated(event, appLabel, "mortgage");
+        break;
       case "PaidPlanConvertedToPaid":
-      case "PlanConvertedToPaid":          await handlePaidPlanConvertedToPaid(event, appLabel, "mortgage"); break;
+      case "PlanConvertedToPaid":
+        await handlePaidPlanConvertedToPaid(event, appLabel, "mortgage");
+        break;
       case "PaidPlanTransferred":
-      case "PlanTransferred":              await handlePaidPlanTransferred(event, appLabel, "mortgage"); break;
-      case "AppRemoved":                   await handleAppRemoved(event, appLabel, "mortgage"); break;
-      default: console.log("[Mortgage] Unhandled event type:", event.eventType);
+      case "PlanTransferred":
+        await handlePaidPlanTransferred(event, appLabel, "mortgage");
+        break;
+      case "AppRemoved":
+        await handleAppRemoved(event, appLabel, "mortgage");
+        break;
+      default:
+        console.log("[Mortgage] Unhandled event type:", event.eventType);
     }
   } catch (err) {
     console.error("[Mortgage] webhooks.process failed:", err);
