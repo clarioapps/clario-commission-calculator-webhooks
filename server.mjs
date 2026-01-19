@@ -9,10 +9,22 @@ const app = express();
 /* ───────────────────── Parsers ─────────────────────
    IMPORTANT:
    - Webhook routes need RAW TEXT.
-   - Our custom routes need JSON.
+   - Our custom routes (showings) need JSON.
 */
-app.use(express.json({ limit: "1mb" }));
+const jsonParser = express.json({ limit: "1mb" });
 const rawText = express.text({ type: "*/*" });
+
+// ✅ FIX: ensure webhooks receive RAW TEXT even if Wix sends application/json
+app.use((req, res, next) => {
+  if (
+    req.path === "/webhook" ||
+    req.path === "/webhook-kpi" ||
+    req.path === "/webhook-mortgage"
+  ) {
+    return rawText(req, res, next);
+  }
+  return jsonParser(req, res, next);
+});
 
 /* ───────────────────── Showings Route Diagnostics (TEMP) ─────────────────────
    Logs inbound /showings traffic + auth decision + resend send attempts
@@ -447,20 +459,16 @@ function normalizeLang(lang) {
 
 const EMAIL_COPY = {
   en: {
-    // Agent/Admin
     subjectNew: "New Showing Request",
     headingNew: "New Showing Request",
     manage: "Manage Showing",
-    approve: "Approve",
-    decline: "Decline",
-    fallbackLinkNote: "If a button doesn’t work, use these links:",
+    fallbackLinkNote: "If the button doesn’t work, use this link:",
     requestedTime: "Requested Time",
     buyer: "Buyer",
     property: "Property",
     statusLabel: "Status",
     linksExpireNotePrefix: "Manage links expire in",
 
-    // Buyer received
     subjectReceived: "We received your showing request",
     headingReceived: "Request received",
     receivedIntro:
@@ -472,7 +480,6 @@ const EMAIL_COPY = {
     waitlistNote:
       "This home may not be accepting showings yet. If so, we’ll notify you as soon as showings are available.",
 
-    // Buyer status
     subjectApproved: "Showing Confirmed",
     subjectDeclined: "Showing Request Declined",
     headingApproved: "Your showing is confirmed",
@@ -489,9 +496,7 @@ const EMAIL_COPY = {
     subjectNew: "Nueva solicitud de visita",
     headingNew: "Nueva solicitud de visita",
     manage: "Administrar visita",
-    approve: "Aprobar",
-    decline: "Rechazar",
-    fallbackLinkNote: "Si un botón no funciona, usa estos enlaces:",
+    fallbackLinkNote: "Si el botón no funciona, usa este enlace:",
     requestedTime: "Hora solicitada",
     buyer: "Comprador",
     property: "Propiedad",
@@ -521,7 +526,6 @@ const EMAIL_COPY = {
     cancelRescheduleLine: "Si necesitas cancelar o reprogramar, contacta al agente.",
     confirmedTimeLabel: "Hora confirmada (hora de la propiedad)",
   },
-  // Fallback shells (content will fall back to English if not defined here)
   fr: {},
   de: {},
   pt: {},
@@ -653,24 +657,6 @@ function primaryButton(url, label) {
     </a>`;
 }
 
-function secondaryButton(url, label) {
-  if (!url) return "";
-  return `
-    <a href="${escapeHtml(url)}"
-       style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;background:#111827;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">
-      ${escapeHtml(label)}
-    </a>`;
-}
-
-function dangerButton(url, label) {
-  if (!url) return "";
-  return `
-    <a href="${escapeHtml(url)}"
-       style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;background:#b42318;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">
-      ${escapeHtml(label)}
-    </a>`;
-}
-
 function infoPill(text) {
   const t = String(text || "").trim();
   if (!t) return "";
@@ -702,26 +688,30 @@ function emailShell({ brandLine, heading, imgBlock, sectionsHtml, footerHtml, sh
   `.trim();
 }
 
-/* ───────────── HTML Builders ───────────── */
+/* ───────────────────── Recipient Robustness Helpers ───────────────────── */
 
-function pickLink(links, key) {
-  try {
-    const direct = String((links && links[key]) || "").trim();
-    if (direct) return direct;
-
-    // Prefer new links, then legacy fallbacks
-    const legacyKey =
-      key === "manageUrl" ? "manageUrlLegacy" :
-      key === "approveUrl" ? "approveUrlLegacy" :
-      key === "declineUrl" ? "declineUrlLegacy" :
-      "";
-
-    const legacy = legacyKey ? String((links && links[legacyKey]) || "").trim() : "";
-    return legacy || "";
-  } catch (_e) {
-    return "";
-  }
+function asTrim(v) {
+  return String(v == null ? "" : v).trim();
 }
+
+function firstEmailFromAny(...vals) {
+  for (const v of vals) {
+    const s = asTrim(v);
+    if (!s) continue;
+    const found = extractValidEmails(s);
+    if (found && found.length) return found[0];
+  }
+  return "";
+}
+
+function normalizeToList(val) {
+  if (Array.isArray(val)) return val.map(asTrim).filter(Boolean);
+  const s = asTrim(val);
+  if (!s) return [];
+  return s.split(/[;,]/g).map(asTrim).filter(Boolean);
+}
+
+/* ───────────── HTML Builders ───────────── */
 
 function buildNewShowingEmailHtml({
   lang,
@@ -747,7 +737,6 @@ function buildNewShowingEmailHtml({
   const buyerName = [buyer?.firstName, buyer?.lastName].filter(Boolean).join(" ").trim();
   const buyerEmail = buyer?.email || "";
   const buyerPhone = buyer?.phone || "";
-
   const buyerHasAgentText = String(buyer?.buyerHasAgentText || "").trim();
 
   const tz =
@@ -759,31 +748,16 @@ function buildNewShowingEmailHtml({
     ).trim() || "America/New_York";
 
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
-
   const statusLabel = String(showing?.statusLabel || "").trim();
 
   const manageUrl = String((links && links.manageUrl) || "").trim();
-
-  const actionRow = manageUrl
-    ? `<div style="margin:18px 0 8px 0;">${primaryButton(manageUrl, c.manage)}</div>`
-    : "";
-
-  const fallbackBlock = manageUrl
-    ? `
-      <div style="font-size:12px;color:#666;margin-top:10px;">
-        ${escapeHtml(c.fallbackLinkNote)}<br/>
-        <a href="${escapeHtml(manageUrl)}">${escapeHtml(manageUrl)}</a>
-      </div>
-    `.trim()
-    : "";
+  const fallbackUrl = manageUrl || "";
 
   const expireDays = Number(linksExpireDays || 0) || 0;
   const expireLine =
     expireDays > 0
       ? `<div style="font-size:12px;color:#666;margin-top:10px;">
-           ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(
-          expireDays === 1 ? "day" : "days"
-        )}.
+           ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(expireDays === 1 ? "day" : "days")}.
          </div>`
       : "";
 
@@ -810,9 +784,19 @@ function buildNewShowingEmailHtml({
       </div>
     </div>
 
-    ${actionRow}
+    <div style="margin:18px 0 8px 0;">
+      ${primaryButton(manageUrl, c.manage)}
+    </div>
 
-    ${fallbackBlock}
+    ${
+      fallbackUrl
+        ? `
+      <div style="font-size:12px;color:#666;margin-top:10px;">
+        ${escapeHtml(c.fallbackLinkNote)}<br/>
+        <a href="${escapeHtml(fallbackUrl)}">${escapeHtml(fallbackUrl)}</a>
+      </div>`
+        : ""
+    }
 
     ${expireLine}
   `.trim();
@@ -827,8 +811,16 @@ function buildNewShowingEmailHtml({
   });
 }
 
-
-function buildBuyerReceivedEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, timeZone, linksExpireDays }) {
+function buildBuyerReceivedEmailHtml({
+  lang,
+  brokerageName,
+  agentName,
+  property,
+  buyer,
+  showing,
+  timeZone,
+  linksExpireDays,
+}) {
   const c = copyForLang(lang);
 
   const brandLine = brokerageName || agentName || "Showing Scheduler";
@@ -853,9 +845,9 @@ function buildBuyerReceivedEmailHtml({ lang, brokerageName, agentName, property,
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
 
   const statusLabel = String(showing?.statusLabel || "").trim();
-  const waitlistNote = (String(statusLabel || "").toLowerCase().includes("wait") || String(statusLabel || "").toLowerCase().includes("coming"))
-    ? c.waitlistNote
-    : "";
+  const lowerStatus = String(statusLabel || "").toLowerCase();
+  const waitlistNote =
+    lowerStatus.includes("wait") || lowerStatus.includes("coming") ? c.waitlistNote : "";
 
   const buyerHasAgentText = String(buyer?.buyerHasAgentText || "").trim();
 
@@ -959,11 +951,11 @@ function buildBuyerStatusEmailHtml({
   const intro = isApproved ? c.approvedBody : c.declinedBody;
 
   const statusLabel = String(showing?.statusLabel || "").trim();
-
   const schedulerUrl = String((links && links.schedulerUrl) || "").trim();
 
   const agentPhone = String(agent?.phone || "").trim();
   const agentEmail = String(agent?.email || "").trim();
+
   const agentContactLine =
     agentName || agentPhone || agentEmail
       ? `
@@ -1061,7 +1053,6 @@ function isAuthorized(req) {
     process.env.CLARIO_SHOWINGS_EMAIL_TOKEN || process.env.CLARIO_EMAIL_WEBHOOK_SECRET || "";
 
   const got = req.headers["x-clario-secret"] || "";
-
   const ok = !!expected && String(got) === String(expected);
 
   try {
@@ -1109,7 +1100,17 @@ app.post("/showings/new-request", async (req, res) => {
     const timeZone =
       body.timeZone || property.timeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
 
-    let to = Array.isArray(body.to) ? body.to.filter(Boolean) : [];
+    let to = normalizeToList(body.to);
+
+    const agentEmailFallback = firstEmailFromAny(
+      body?.agent?.email,
+      body.agentEmail,
+      body.agent_email,
+      body?.agent?.assignedAgentEmail,
+      body?.agent?.assignedAgentEmailSnapshot
+    );
+
+    if (to.length === 0 && agentEmailFallback) to = [agentEmailFallback];
     if (to.length === 0 && ADMIN_EMAIL) to = [ADMIN_EMAIL];
 
     const c = copyForLang(lang);
@@ -1175,7 +1176,14 @@ app.post("/showings/buyer-status", async (req, res) => {
     const timeZone =
       body.timeZone || property.timeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
 
-    const buyerEmail = buyer && buyer.email ? String(buyer.email).trim() : "";
+    const buyerEmail = firstEmailFromAny(
+      buyer?.email,
+      body?.buyerEmail,
+      body?.buyer_email,
+      body?.email,
+      body?.leadEmail
+    );
+
     const to = buyerEmail ? [buyerEmail] : [];
 
     const c = copyForLang(lang);
@@ -1241,7 +1249,14 @@ app.post("/showings/buyer-received", async (req, res) => {
     const timeZone =
       body.timeZone || property.timeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
 
-    const buyerEmail = buyer && buyer.email ? String(buyer.email).trim() : "";
+    const buyerEmail = firstEmailFromAny(
+      buyer?.email,
+      body?.buyerEmail,
+      body?.buyer_email,
+      body?.email,
+      body?.leadEmail
+    );
+
     const to = buyerEmail ? [buyerEmail] : [];
 
     const c = copyForLang(lang);
@@ -1271,7 +1286,7 @@ app.post("/showings/buyer-received", async (req, res) => {
 
 /* ───────────────────── Webhooks ───────────────────── */
 
-app.post("/webhook", rawText, async (req, res) => {
+app.post("/webhook", async (req, res) => {
   console.log("===== [Commission Calculator] Webhook received =====");
   console.log("Raw body:", req.body);
 
@@ -1315,7 +1330,7 @@ app.post("/webhook", rawText, async (req, res) => {
   res.status(200).send("ok");
 });
 
-app.post("/webhook-kpi", rawText, async (req, res) => {
+app.post("/webhook-kpi", async (req, res) => {
   console.log("===== [Transactions KPI] Webhook received =====");
   console.log("Raw body:", req.body);
 
@@ -1359,7 +1374,7 @@ app.post("/webhook-kpi", rawText, async (req, res) => {
   res.status(200).send("ok");
 });
 
-app.post("/webhook-mortgage", rawText, async (req, res) => {
+app.post("/webhook-mortgage", async (req, res) => {
   console.log("===== [Mortgage] Webhook received =====");
   console.log("Raw body:", req.body);
 
