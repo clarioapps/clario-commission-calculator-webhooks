@@ -723,7 +723,17 @@ function pickLink(links, key) {
   }
 }
 
-function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, links, timeZone, linksExpireDays }) {
+function buildNewShowingEmailHtml({
+  lang,
+  brokerageName,
+  agentName,
+  property,
+  buyer,
+  showing,
+  links,
+  timeZone,
+  linksExpireDays,
+}) {
   const c = copyForLang(lang);
 
   const brandLine = brokerageName || agentName || "Showing Scheduler";
@@ -752,49 +762,32 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
 
   const statusLabel = String(showing?.statusLabel || "").trim();
 
-    const manageUrl = links?.manageUrl || "";
-  const fallbackUrl = manageUrl || "";
+  const manageUrl = String((links && links.manageUrl) || "").trim();
 
-  const sections = `
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.property)}</div>
-      <div style="font-size:14px;line-height:1.4;">${addressHtml || "—"}</div>
-    </div>
+  const actionRow = manageUrl
+    ? `<div style="margin:18px 0 8px 0;">${primaryButton(manageUrl, c.manage)}</div>`
+    : "";
 
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requestedTime)}</div>
-      <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
-    </div>
-
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.buyer)}</div>
-      <div style="font-size:14px;line-height:1.6;">
-        <div>${escapeHtml(buyerName || "—")}</div>
-        ${
-          buyerEmail
-            ? `<div><a href="mailto:${escapeHtml(buyerEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(buyerEmail)}</a></div>`
-            : ""
-        }
-        ${buyerPhone ? `<div>${escapeHtml(buyerPhone)}</div>` : ""}
-      </div>
-    </div>
-
-    <div style="margin:18px 0 8px 0;">
-      ${primaryButton(manageUrl, c.manage)}
-    </div>
-
-    ${
-      fallbackUrl
-        ? `
+  const fallbackBlock = manageUrl
+    ? `
       <div style="font-size:12px;color:#666;margin-top:10px;">
         ${escapeHtml(c.fallbackLinkNote)}<br/>
-        <a href="${escapeHtml(fallbackUrl)}">${escapeHtml(fallbackUrl)}</a>
-      </div>`
-        : ""
-    }
-  `.trim();
+        <a href="${escapeHtml(manageUrl)}">${escapeHtml(manageUrl)}</a>
+      </div>
+    `.trim()
+    : "";
 
-   const sections = `
+  const expireDays = Number(linksExpireDays || 0) || 0;
+  const expireLine =
+    expireDays > 0
+      ? `<div style="font-size:12px;color:#666;margin-top:10px;">
+           ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(
+          expireDays === 1 ? "day" : "days"
+        )}.
+         </div>`
+      : "";
+
+  const sections = `
     ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
 
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
@@ -833,6 +826,7 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
     showingId: showing?.id || "",
   });
 }
+
 
 function buildBuyerReceivedEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, timeZone, linksExpireDays }) {
   const c = copyForLang(lang);
