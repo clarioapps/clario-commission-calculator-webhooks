@@ -78,7 +78,7 @@ NQIDAQAB
   RESEND_API_KEY       = your Resend API key
 
   ADMIN_EMAIL          = optional fallback admin inbox
-  FROM_EMAIL           = "Clario Apps <wecare@clarioapps.net>"
+  FROM_EMAIL           = "Clario Apps <wecare@zoldly.com>" or "Clario Apps <wecare@clarioapps.net>"
 
   CLARIO_SHOWINGS_EMAIL_TOKEN = shared secret to protect /showings/* routes
   (Optional legacy fallback) CLARIO_EMAIL_WEBHOOK_SECRET
@@ -437,8 +437,11 @@ async function handleAppRemoved(event, appLabel, appKey) {
 /* ───────────────────── Showing Emails ───────────────────── */
 
 function normalizeLang(lang) {
-  const s = String(lang || "").toLowerCase();
+  const s = String(lang || "").toLowerCase().trim();
   if (s.startsWith("es")) return "es";
+  if (s.startsWith("fr")) return "fr";
+  if (s.startsWith("de")) return "de";
+  if (s.startsWith("pt")) return "pt";
   return "en";
 }
 
@@ -448,11 +451,14 @@ const EMAIL_COPY = {
     subjectNew: "New Showing Request",
     headingNew: "New Showing Request",
     manage: "Manage Showing",
-    fallbackLinkNote: "If the button doesn’t work, use this link:",
+    approve: "Approve",
+    decline: "Decline",
+    fallbackLinkNote: "If a button doesn’t work, use these links:",
     requestedTime: "Requested Time",
-    scheduledTime: "Scheduled Time",
     buyer: "Buyer",
     property: "Property",
+    statusLabel: "Status",
+    linksExpireNotePrefix: "Manage links expire in",
 
     // Buyer received
     subjectReceived: "We received your showing request",
@@ -462,29 +468,35 @@ const EMAIL_COPY = {
     whatNext: "What happens next",
     next1: "The agent is reviewing availability now.",
     next2: "You’ll receive an email confirming your appointment or requesting a different time.",
+    buyerAgentNoteLabel: "Buyer’s Agent",
+    waitlistNote:
+      "This home may not be accepting showings yet. If so, we’ll notify you as soon as showings are available.",
 
     // Buyer status
     subjectApproved: "Showing Confirmed",
     subjectDeclined: "Showing Request Declined",
     headingApproved: "Your showing is confirmed",
     headingDeclined: "Your request was declined",
-    statusLabel: "Status",
     reasonLabel: "Reason",
     approvedBody: "Your appointment has been confirmed. We look forward to seeing you.",
     declinedBody: "Unfortunately, the requested time is not available.",
     rescheduleBtn: "Pick a different time",
     contactLinePrefix: "Need help?",
     cancelRescheduleLine: "If you need to cancel or reschedule, contact the agent directly.",
+    confirmedTimeLabel: "Confirmed Time (Property Time)",
   },
   es: {
     subjectNew: "Nueva solicitud de visita",
     headingNew: "Nueva solicitud de visita",
     manage: "Administrar visita",
-    fallbackLinkNote: "Si el botón no funciona, usa este enlace:",
+    approve: "Aprobar",
+    decline: "Rechazar",
+    fallbackLinkNote: "Si un botón no funciona, usa estos enlaces:",
     requestedTime: "Hora solicitada",
-    scheduledTime: "Hora programada",
     buyer: "Comprador",
     property: "Propiedad",
+    statusLabel: "Estado",
+    linksExpireNotePrefix: "Los enlaces de gestión expiran en",
 
     subjectReceived: "Recibimos tu solicitud de visita",
     headingReceived: "Solicitud recibida",
@@ -493,20 +505,34 @@ const EMAIL_COPY = {
     whatNext: "¿Qué sigue?",
     next1: "El agente está revisando la disponibilidad.",
     next2: "Recibirás un correo confirmando tu cita o solicitando otra hora.",
+    buyerAgentNoteLabel: "Agente del comprador",
+    waitlistNote:
+      "Es posible que esta propiedad aún no esté aceptando visitas. Si es así, te avisaremos cuando haya visitas disponibles.",
 
     subjectApproved: "Visita confirmada",
     subjectDeclined: "Solicitud rechazada",
     headingApproved: "Tu visita está confirmada",
     headingDeclined: "Tu solicitud fue rechazada",
-    statusLabel: "Estado",
     reasonLabel: "Motivo",
     approvedBody: "Tu cita ha sido confirmada.",
     declinedBody: "Lamentablemente, la hora solicitada no está disponible.",
     rescheduleBtn: "Elegir otra hora",
     contactLinePrefix: "¿Necesitas ayuda?",
     cancelRescheduleLine: "Si necesitas cancelar o reprogramar, contacta al agente.",
+    confirmedTimeLabel: "Hora confirmada (hora de la propiedad)",
   },
+  // Fallback shells (content will fall back to English if not defined here)
+  fr: {},
+  de: {},
+  pt: {},
 };
+
+function copyForLang(lang) {
+  const key = normalizeLang(lang);
+  const base = EMAIL_COPY.en;
+  const specific = EMAIL_COPY[key] || {};
+  return { ...base, ...specific };
+}
 
 function wixImageToPublicUrl(value) {
   const v = String(value || "").trim();
@@ -627,6 +653,34 @@ function primaryButton(url, label) {
     </a>`;
 }
 
+function secondaryButton(url, label) {
+  if (!url) return "";
+  return `
+    <a href="${escapeHtml(url)}"
+       style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;background:#111827;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">
+      ${escapeHtml(label)}
+    </a>`;
+}
+
+function dangerButton(url, label) {
+  if (!url) return "";
+  return `
+    <a href="${escapeHtml(url)}"
+       style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;background:#b42318;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">
+      ${escapeHtml(label)}
+    </a>`;
+}
+
+function infoPill(text) {
+  const t = String(text || "").trim();
+  if (!t) return "";
+  return `
+    <span style="display:inline-block;padding:6px 10px;border-radius:999px;background:#eef2ff;color:#1e3a8a;font-family:Arial,Helvetica,sans-serif;font-size:12px;font-weight:700;">
+      ${escapeHtml(t)}
+    </span>
+  `.trim();
+}
+
 function emailShell({ brandLine, heading, imgBlock, sectionsHtml, footerHtml, showingId }) {
   return `
   <div style="background:#f6f6f7;padding:8px;">
@@ -650,8 +704,27 @@ function emailShell({ brandLine, heading, imgBlock, sectionsHtml, footerHtml, sh
 
 /* ───────────── HTML Builders ───────────── */
 
-function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, links, timeZone }) {
-  const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
+function pickLink(links, key) {
+  try {
+    const direct = String((links && links[key]) || "").trim();
+    if (direct) return direct;
+
+    // Prefer new links, then legacy fallbacks
+    const legacyKey =
+      key === "manageUrl" ? "manageUrlLegacy" :
+      key === "approveUrl" ? "approveUrlLegacy" :
+      key === "declineUrl" ? "declineUrlLegacy" :
+      "";
+
+    const legacy = legacyKey ? String((links && links[legacyKey]) || "").trim() : "";
+    return legacy || "";
+  } catch (_e) {
+    return "";
+  }
+}
+
+function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, links, timeZone, linksExpireDays }) {
+  const c = copyForLang(lang);
 
   const brandLine = brokerageName || agentName || "Showing Scheduler";
   const addressHtml = formatAddress(property);
@@ -665,6 +738,8 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
   const buyerEmail = buyer?.email || "";
   const buyerPhone = buyer?.phone || "";
 
+  const buyerHasAgentText = String(buyer?.buyerHasAgentText || "").trim();
+
   const tz =
     String(
       (property && property.timeZone) ||
@@ -675,7 +750,9 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
 
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
 
-  const manageUrl = links?.manageUrl || "";
+  const statusLabel = String(showing?.statusLabel || "").trim();
+
+    const manageUrl = links?.manageUrl || "";
   const fallbackUrl = manageUrl || "";
 
   const sections = `
@@ -693,7 +770,11 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
       <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.buyer)}</div>
       <div style="font-size:14px;line-height:1.6;">
         <div>${escapeHtml(buyerName || "—")}</div>
-        ${buyerEmail ? `<div><a href="mailto:${escapeHtml(buyerEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(buyerEmail)}</a></div>` : ""}
+        ${
+          buyerEmail
+            ? `<div><a href="mailto:${escapeHtml(buyerEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(buyerEmail)}</a></div>`
+            : ""
+        }
         ${buyerPhone ? `<div>${escapeHtml(buyerPhone)}</div>` : ""}
       </div>
     </div>
@@ -713,6 +794,36 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
     }
   `.trim();
 
+   const sections = `
+    ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
+
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.property)}</div>
+      <div style="font-size:14px;line-height:1.4;">${addressHtml || "—"}</div>
+    </div>
+
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requestedTime)}</div>
+      <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
+    </div>
+
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.buyer)}</div>
+      <div style="font-size:14px;line-height:1.6;">
+        <div>${escapeHtml(buyerName || "—")}</div>
+        ${buyerEmail ? `<div><a href="mailto:${escapeHtml(buyerEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(buyerEmail)}</a></div>` : ""}
+        ${buyerPhone ? `<div>${escapeHtml(buyerPhone)}</div>` : ""}
+        ${buyerHasAgentText ? `<div style="margin-top:8px;font-size:13px;color:#111;"><strong>${escapeHtml(c.buyerAgentNoteLabel)}:</strong> ${escapeHtml(buyerHasAgentText)}</div>` : ""}
+      </div>
+    </div>
+
+    ${actionRow}
+
+    ${fallbackBlock}
+
+    ${expireLine}
+  `.trim();
+
   return emailShell({
     brandLine,
     heading: c.headingNew,
@@ -723,8 +834,8 @@ function buildNewShowingEmailHtml({ lang, brokerageName, agentName, property, bu
   });
 }
 
-function buildBuyerReceivedEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, timeZone }) {
-  const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
+function buildBuyerReceivedEmailHtml({ lang, brokerageName, agentName, property, buyer, showing, timeZone, linksExpireDays }) {
+  const c = copyForLang(lang);
 
   const brandLine = brokerageName || agentName || "Showing Scheduler";
   const addressHtml = formatAddress(property);
@@ -747,11 +858,30 @@ function buildBuyerReceivedEmailHtml({ lang, brokerageName, agentName, property,
 
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
 
+  const statusLabel = String(showing?.statusLabel || "").trim();
+  const waitlistNote = (String(statusLabel || "").toLowerCase().includes("wait") || String(statusLabel || "").toLowerCase().includes("coming"))
+    ? c.waitlistNote
+    : "";
+
+  const buyerHasAgentText = String(buyer?.buyerHasAgentText || "").trim();
+
+  const expireDays = Number(linksExpireDays || 0) || 0;
+  const expireLine =
+    expireDays > 0
+      ? `<div style="font-size:12px;color:#666;margin-top:10px;">
+           ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(expireDays === 1 ? "day" : "days")}.
+         </div>`
+      : "";
+
   const sections = `
+    ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
+
     <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
       <div style="font-weight:700;margin-bottom:6px;">${escapeHtml(c.headingReceived)}</div>
       <div>Hi ${escapeHtml(greetingName)},</div>
       <div>${escapeHtml(c.receivedIntro)}</div>
+      ${waitlistNote ? `<div style="margin-top:10px;">${escapeHtml(waitlistNote)}</div>` : ""}
+      ${buyerHasAgentText ? `<div style="margin-top:10px;"><strong>${escapeHtml(c.buyerAgentNoteLabel)}:</strong> ${escapeHtml(buyerHasAgentText)}</div>` : ""}
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
@@ -771,6 +901,8 @@ function buildBuyerReceivedEmailHtml({ lang, brokerageName, agentName, property,
         <li>${escapeHtml(c.next2)}</li>
       </ul>
     </div>
+
+    ${expireLine}
   `.trim();
 
   return emailShell({
@@ -801,8 +933,9 @@ function buildBuyerStatusEmailHtml({
   timeZone,
   links,
   agent,
+  linksExpireDays,
 }) {
-  const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
+  const c = copyForLang(lang);
 
   const brandLine = brokerageName || agentName || "Showing Scheduler";
   const addressHtml = formatAddress(property);
@@ -831,7 +964,9 @@ function buildBuyerStatusEmailHtml({
   const heading = isApproved ? c.headingApproved : c.headingDeclined;
   const intro = isApproved ? c.approvedBody : c.declinedBody;
 
-  const schedulerUrl = links?.schedulerUrl || "";
+  const statusLabel = String(showing?.statusLabel || "").trim();
+
+  const schedulerUrl = String((links && links.schedulerUrl) || "").trim();
 
   const agentPhone = String(agent?.phone || "").trim();
   const agentEmail = String(agent?.email || "").trim();
@@ -861,7 +996,17 @@ function buildBuyerStatusEmailHtml({
       ? `<div style="margin:14px 0 8px 0;">${primaryButton(schedulerUrl, c.rescheduleBtn)}</div>`
       : "";
 
+  const expireDays = Number(linksExpireDays || 0) || 0;
+  const expireLine =
+    expireDays > 0
+      ? `<div style="font-size:12px;color:#666;margin-top:10px;">
+           ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(expireDays === 1 ? "day" : "days")}.
+         </div>`
+      : "";
+
   const sections = `
+    ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
+
     <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
       <div>Hi ${escapeHtml(greetingName)},</div>
       <div>${escapeHtml(intro)}</div>
@@ -873,7 +1018,7 @@ function buildBuyerStatusEmailHtml({
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">Confirmed Time (Property Time)</div>
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.confirmedTimeLabel)}</div>
       <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
     </div>
 
@@ -901,6 +1046,8 @@ function buildBuyerStatusEmailHtml({
       </div>`
         : ""
     }
+
+    ${expireLine}
   `.trim();
 
   return emailShell({
@@ -963,13 +1110,16 @@ app.post("/showings/new-request", async (req, res) => {
     const showing = body.showing || {};
     const links = body.links || {};
 
+    const linksExpireDays = body.linksExpireDays || body.links_expire_days || 0;
+
     const timeZone =
       body.timeZone || property.timeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
 
     let to = Array.isArray(body.to) ? body.to.filter(Boolean) : [];
     if (to.length === 0 && ADMIN_EMAIL) to = [ADMIN_EMAIL];
 
-    const subjectBase = (EMAIL_COPY[lang] || EMAIL_COPY.en).subjectNew;
+    const c = copyForLang(lang);
+    const subjectBase = c.subjectNew;
     const subject = `${subjectBase} — ${subjectAddressShort(property)}`;
 
     const html = buildNewShowingEmailHtml({
@@ -981,6 +1131,7 @@ app.post("/showings/new-request", async (req, res) => {
       showing,
       links,
       timeZone,
+      linksExpireDays,
     });
 
     const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
@@ -1021,6 +1172,8 @@ app.post("/showings/buyer-status", async (req, res) => {
     const links = body.links || {};
     const agent = body.agent || {};
 
+    const linksExpireDays = body.linksExpireDays || body.links_expire_days || 0;
+
     const status = body.status || body.showingStatus || "";
     const declineReasonLabel =
       body.declineReasonLabel || (body.declineReason && body.declineReason.label) || "";
@@ -1031,7 +1184,7 @@ app.post("/showings/buyer-status", async (req, res) => {
     const buyerEmail = buyer && buyer.email ? String(buyer.email).trim() : "";
     const to = buyerEmail ? [buyerEmail] : [];
 
-    const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
+    const c = copyForLang(lang);
     const statusNorm = capFirst(status);
     const isApproved = statusNorm === "Approved";
 
@@ -1050,6 +1203,7 @@ app.post("/showings/buyer-status", async (req, res) => {
       timeZone,
       links,
       agent,
+      linksExpireDays,
     });
 
     const replyTo = String(agent?.email || body.agentEmail || body.agent_email || "").trim();
@@ -1088,13 +1242,15 @@ app.post("/showings/buyer-received", async (req, res) => {
     const buyer = body.buyer || {};
     const showing = body.showing || {};
 
+    const linksExpireDays = body.linksExpireDays || body.links_expire_days || 0;
+
     const timeZone =
       body.timeZone || property.timeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
 
     const buyerEmail = buyer && buyer.email ? String(buyer.email).trim() : "";
     const to = buyerEmail ? [buyerEmail] : [];
 
-    const c = EMAIL_COPY[lang] || EMAIL_COPY.en;
+    const c = copyForLang(lang);
     const subject = `${c.subjectReceived} — ${subjectAddressShort(property)}`;
 
     const html = buildBuyerReceivedEmailHtml({
@@ -1105,6 +1261,7 @@ app.post("/showings/buyer-received", async (req, res) => {
       buyer,
       showing,
       timeZone,
+      linksExpireDays,
     });
 
     const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
@@ -1264,3 +1421,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Webhook server listening on port ${PORT}`);
 });
+
