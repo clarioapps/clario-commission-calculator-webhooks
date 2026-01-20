@@ -462,6 +462,8 @@ const EMAIL_COPY = {
     subjectNew: "New Showing Request",
     headingNew: "New Showing Request",
     manage: "Manage Showing",
+    approve: "Approve",
+    decline: "Decline",
     fallbackLinkNote: "If the button doesn’t work, use this link:",
     requestedTime: "Requested Time",
     buyer: "Buyer",
@@ -491,11 +493,14 @@ const EMAIL_COPY = {
     contactLinePrefix: "Need help?",
     cancelRescheduleLine: "If you need to cancel or reschedule, contact the agent directly.",
     confirmedTimeLabel: "Confirmed Time (Property Time)",
+    agentSectionLabel: "Assigned Agent",
   },
   es: {
     subjectNew: "Nueva solicitud de visita",
     headingNew: "Nueva solicitud de visita",
     manage: "Administrar visita",
+    approve: "Aprobar",
+    decline: "Rechazar",
     fallbackLinkNote: "Si el botón no funciona, usa este enlace:",
     requestedTime: "Hora solicitada",
     buyer: "Comprador",
@@ -525,6 +530,7 @@ const EMAIL_COPY = {
     contactLinePrefix: "¿Necesitas ayuda?",
     cancelRescheduleLine: "Si necesitas cancelar o reprogramar, contacta al agente.",
     confirmedTimeLabel: "Hora confirmada (hora de la propiedad)",
+    agentSectionLabel: "Agente asignado",
   },
   fr: {},
   de: {},
@@ -630,9 +636,13 @@ function safeDisplayTimeOnlyProperty({ showing, timeZone, lang }) {
 
   const displayProperty = String(showing?.requestedStartDisplayProperty || "").trim();
   const displayCombined = String(showing?.requestedStartDisplayCombined || "").trim();
+  const displayAlt1 = String(showing?.requestedStartDisplay || "").trim();
+  const displayAlt2 = String(showing?.requestedTimeDisplay || "").trim();
 
   if (displayProperty) return displayProperty;
   if (displayCombined) return displayCombined;
+  if (displayAlt1) return displayAlt1;
+  if (displayAlt2) return displayAlt2;
 
   const whenText = formatInTimeZone(
     showing?.requestedStart ||
@@ -640,7 +650,9 @@ function safeDisplayTimeOnlyProperty({ showing, timeZone, lang }) {
       showing?.slotStart ||
       showing?.start ||
       showing?.startTime ||
-      showing?.dateTime,
+      showing?.dateTime ||
+      showing?.requested_start ||
+      showing?.requested_start_utc,
     tzFallback,
     lang
   );
@@ -655,6 +667,29 @@ function primaryButton(url, label) {
        style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;background:#0b5cff;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">
       ${escapeHtml(label)}
     </a>`;
+}
+
+function secondaryButton(url, label) {
+  if (!url) return "";
+  return `
+    <a href="${escapeHtml(url)}"
+       style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;background:#111827;color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:600;">
+      ${escapeHtml(label)}
+    </a>`;
+}
+
+function buttonRow({ leftUrl, leftLabel, rightUrl, rightLabel }) {
+  const left = leftUrl ? primaryButton(leftUrl, leftLabel) : "";
+  const right = rightUrl ? secondaryButton(rightUrl, rightLabel) : "";
+  if (!left && !right) return "";
+  return `
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0;">
+      <tr>
+        ${left ? `<td style="padding-right:10px;vertical-align:top;">${left}</td>` : ""}
+        ${right ? `<td style="vertical-align:top;">${right}</td>` : ""}
+      </tr>
+    </table>
+  `.trim();
 }
 
 function infoPill(text) {
@@ -750,8 +785,15 @@ function buildNewShowingEmailHtml({
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
   const statusLabel = String(showing?.statusLabel || "").trim();
 
-  const manageUrl = String((links && links.manageUrl) || "").trim();
-  const fallbackUrl = manageUrl || "";
+  // ✅ Robust link fallbacks so buttons always render
+  const manageUrl =
+    String((links && (links.manageUrl || links.managePath)) || "").trim();
+  const approveUrl =
+    String((links && (links.approveUrl || links.approvePath)) || "").trim();
+  const declineUrl =
+    String((links && (links.declineUrl || links.declinePath)) || "").trim();
+
+  const fallbackUrl = manageUrl || approveUrl || declineUrl || "";
 
   const expireDays = Number(linksExpireDays || 0) || 0;
   const expireLine =
@@ -760,6 +802,16 @@ function buildNewShowingEmailHtml({
            ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(expireDays === 1 ? "day" : "days")}.
          </div>`
       : "";
+
+  const actionButtons =
+    approveUrl || declineUrl
+      ? buttonRow({
+          leftUrl: approveUrl || manageUrl,
+          leftLabel: approveUrl ? c.approve : c.manage,
+          rightUrl: declineUrl || "",
+          rightLabel: c.decline,
+        })
+      : primaryButton(manageUrl, c.manage);
 
   const sections = `
     ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
@@ -785,7 +837,7 @@ function buildNewShowingEmailHtml({
     </div>
 
     <div style="margin:18px 0 8px 0;">
-      ${primaryButton(manageUrl, c.manage)}
+      ${actionButtons || ""}
     </div>
 
     ${
@@ -820,6 +872,7 @@ function buildBuyerReceivedEmailHtml({
   showing,
   timeZone,
   linksExpireDays,
+  agent,
 }) {
   const c = copyForLang(lang);
 
@@ -851,6 +904,23 @@ function buildBuyerReceivedEmailHtml({
 
   const buyerHasAgentText = String(buyer?.buyerHasAgentText || "").trim();
 
+  const agentPhone = String(agent?.phone || "").trim();
+  const agentEmail = String(agent?.email || "").trim();
+
+  const agentContactBlock =
+    (agentName || agentPhone || agentEmail)
+      ? `
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.agentSectionLabel)}</div>
+      <div style="font-size:14px;line-height:1.6;">
+        <div>${escapeHtml(agentName || "Agent")}</div>
+        ${agentPhone ? `<div>${escapeHtml(agentPhone)}</div>` : ""}
+        ${agentEmail ? `<div><a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a></div>` : ""}
+      </div>
+    </div>
+  `.trim()
+      : "";
+
   const expireDays = Number(linksExpireDays || 0) || 0;
   const expireLine =
     expireDays > 0
@@ -863,7 +933,6 @@ function buildBuyerReceivedEmailHtml({
     ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
 
     <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
-      <div style="font-weight:700;margin-bottom:6px;">${escapeHtml(c.headingReceived)}</div>
       <div>Hi ${escapeHtml(greetingName)},</div>
       <div>${escapeHtml(c.receivedIntro)}</div>
       ${waitlistNote ? `<div style="margin-top:10px;">${escapeHtml(waitlistNote)}</div>` : ""}
@@ -876,9 +945,11 @@ function buildBuyerReceivedEmailHtml({
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">Requested Time (Property Time)</div>
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requestedTime)} (Property Time)</div>
       <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
     </div>
+
+    ${agentContactBlock ? agentContactBlock : ""}
 
     <div style="margin-top:10px;">
       <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${escapeHtml(c.whatNext)}</div>
@@ -1078,7 +1149,6 @@ function isAuthorized(req) {
   return ok;
 }
 
-
 /* ───────────────────── /showings/new-request ───────────────────── */
 
 app.post("/showings/new-request", async (req, res) => {
@@ -1141,6 +1211,15 @@ app.post("/showings/new-request", async (req, res) => {
 
     const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
     const fromName = brokerageName || agentName || "Showing Scheduler";
+
+    console.log("[ShowingsRoute] /showings/new-request computed", {
+      to,
+      replyTo: replyTo || "",
+      requestedText: safeDisplayTimeOnlyProperty({ showing, timeZone, lang }),
+      manageUrl: String((links && (links.manageUrl || links.managePath)) || "").trim(),
+      approveUrl: String((links && (links.approveUrl || links.approvePath)) || "").trim(),
+      declineUrl: String((links && (links.declineUrl || links.declinePath)) || "").trim(),
+    });
 
     await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
@@ -1221,6 +1300,13 @@ app.post("/showings/buyer-status", async (req, res) => {
     const replyTo = String(agent?.email || body.agentEmail || body.agent_email || "").trim();
     const fromName = brokerageName || agentName || "Showing Scheduler";
 
+    console.log("[ShowingsRoute] /showings/buyer-status computed", {
+      to,
+      replyTo: replyTo || "",
+      status: statusNorm,
+      requestedText: safeDisplayTimeOnlyProperty({ showing, timeZone, lang }),
+    });
+
     await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
   } catch (err) {
@@ -1253,6 +1339,7 @@ app.post("/showings/buyer-received", async (req, res) => {
     const property = body.property || {};
     const buyer = body.buyer || {};
     const showing = body.showing || {};
+    const agent = body.agent || {};
 
     const linksExpireDays = body.linksExpireDays || body.links_expire_days || 0;
 
@@ -1281,10 +1368,19 @@ app.post("/showings/buyer-received", async (req, res) => {
       showing,
       timeZone,
       linksExpireDays,
+      agent,
     });
 
-    const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
+    const replyTo = String((agent && agent.email) || (body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
     const fromName = brokerageName || agentName || "Showing Scheduler";
+
+    console.log("[ShowingsRoute] /showings/buyer-received computed", {
+      to,
+      replyTo: replyTo || "",
+      requestedText: safeDisplayTimeOnlyProperty({ showing, timeZone, lang }),
+      agentEmail: String(agent?.email || "").trim(),
+      agentPhone: String(agent?.phone || "").trim(),
+    });
 
     await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
@@ -1440,4 +1536,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Webhook server listening on port ${PORT}`);
 });
-
