@@ -1049,17 +1049,26 @@ function buildBuyerStatusEmailHtml({
 /* ───────────────────── Protected endpoints from Wix backend ───────────────────── */
 
 function isAuthorized(req) {
-  const expected =
-    process.env.CLARIO_SHOWINGS_EMAIL_TOKEN || process.env.CLARIO_EMAIL_WEBHOOK_SECRET || "";
+  const expectedEnv =
+    process.env.CLARIO_SHOWINGS_EMAIL_TOKEN ||
+    process.env.CLARIO_EMAIL_WEBHOOK_SECRET ||
+    "";
 
-  const got = req.headers["x-clario-secret"] || "";
-  const ok = !!expected && String(got) === String(expected);
+  // ✅ Backward-compatible fallback: accept the token currently hardcoded in the Wix Email Trigger
+  // (This prevents 401s when Render env vars are missing/mismatched.)
+  const LEGACY_TRIGGER_TOKEN = "cLaRIo134679LLcAppS2025ClAriOaPPs";
+
+  const got = String(req.headers["x-clario-secret"] || "");
+  const ok =
+    (!!expectedEnv && got === String(expectedEnv)) ||
+    (!!LEGACY_TRIGGER_TOKEN && got === String(LEGACY_TRIGGER_TOKEN));
 
   try {
     console.log("[ShowingsAuth] CHECK", {
       ok,
-      expectedSet: !!expected,
-      expectedPrefix: expected ? String(expected).slice(0, 6) + "..." : "",
+      expectedEnvSet: !!expectedEnv,
+      expectedEnvPrefix: expectedEnv ? String(expectedEnv).slice(0, 6) + "..." : "",
+      legacyEnabled: !!LEGACY_TRIGGER_TOKEN,
       gotPrefix: got ? String(got).slice(0, 6) + "..." : "",
       path: req.path,
       reqId: req.headers["x-clario-reqid"] || "",
@@ -1068,6 +1077,7 @@ function isAuthorized(req) {
 
   return ok;
 }
+
 
 /* ───────────────────── /showings/new-request ───────────────────── */
 
