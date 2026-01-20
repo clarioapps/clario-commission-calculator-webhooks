@@ -26,7 +26,9 @@ app.use((req, res, next) => {
   return jsonParser(req, res, next);
 });
 
-/* ───────────────────── Showings Route Diagnostics ───────────────────── */
+/* ───────────────────── Showings Route Diagnostics (TEMP) ─────────────────────
+   Logs inbound /showings traffic + auth decision + resend send attempts
+--------------------------------------------------------------------------- */
 app.use("/showings", (req, _res, next) => {
   try {
     console.log("[ShowingsRoute] INBOUND", {
@@ -88,7 +90,7 @@ NQIDAQAB
   RESEND_API_KEY       = your Resend API key
 
   ADMIN_EMAIL          = optional fallback admin inbox
-  FROM_EMAIL           = "Clario Apps <wecare@clarioapps.net>" (or your preferred)
+  FROM_EMAIL           = "Clario Apps <wecare@zoldly.com>" or "Clario Apps <wecare@clarioapps.net>"
 
   CLARIO_SHOWINGS_EMAIL_TOKEN = shared secret to protect /showings/* routes
   (Optional legacy fallback) CLARIO_EMAIL_WEBHOOK_SECRET
@@ -444,7 +446,7 @@ async function handleAppRemoved(event, appLabel, appKey) {
   await sendAdminEmail(`${appLabel} – App Removed`, html);
 }
 
-/* ───────────────────── Showing Emails (NO APPROVE/DECLINE) ───────────────────── */
+/* ───────────────────── Showing Emails ───────────────────── */
 
 function normalizeLang(lang) {
   const s = String(lang || "").toLowerCase().trim();
@@ -460,6 +462,8 @@ const EMAIL_COPY = {
     subjectNew: "New Showing Request",
     headingNew: "New Showing Request",
     manage: "Manage Showing",
+    approve: "Approve",
+    decline: "Decline",
     fallbackLinkNote: "If the button doesn’t work, use this link:",
     requestedTime: "Requested Time",
     buyer: "Buyer",
@@ -495,6 +499,8 @@ const EMAIL_COPY = {
     subjectNew: "Nueva solicitud de visita",
     headingNew: "Nueva solicitud de visita",
     manage: "Administrar visita",
+    approve: "Aprobar",
+    decline: "Rechazar",
     fallbackLinkNote: "Si el botón no funciona, usa este enlace:",
     requestedTime: "Hora solicitada",
     buyer: "Comprador",
@@ -625,8 +631,12 @@ function formatInTimeZone(dateValue, timeZone, lang) {
 
 function safeDisplayTimeOnlyProperty({ showing, timeZone, lang }) {
   const tzFallback =
-    String(timeZone || showing?.propertyTimeZoneSnapshot || "America/New_York").trim() ||
-    "America/New_York";
+    String(
+      timeZone ||
+        showing?.requestedTimeZone ||
+        showing?.propertyTimeZoneSnapshot ||
+        "America/New_York"
+    ).trim() || "America/New_York";
 
   const displayProperty = String(showing?.requestedStartDisplayProperty || "").trim();
   const displayCombined = String(showing?.requestedStartDisplayCombined || "").trim();
@@ -641,6 +651,8 @@ function safeDisplayTimeOnlyProperty({ showing, timeZone, lang }) {
   const whenText = formatInTimeZone(
     showing?.requestedStart ||
       showing?.requestedStartUtc ||
+      showing?.requestedDateTime ||
+      showing?.requestedDateTimeUtc ||
       showing?.slotStart ||
       showing?.start ||
       showing?.startTime ||
@@ -694,8 +706,20 @@ function emailShell({ brandLine, heading, imgBlock, sectionsHtml, footerHtml, sh
   `.trim();
 }
 
+/* ───────────────────── Recipient Robustness Helpers ───────────────────── */
+
 function asTrim(v) {
   return String(v == null ? "" : v).trim();
+}
+
+function firstEmailFromAny(...vals) {
+  for (const v of vals) {
+    const s = asTrim(v);
+    if (!s) continue;
+    const found = extractValidEmails(s);
+    if (found && found.length) return found[0];
+  }
+  return "";
 }
 
 function normalizeToList(val) {
@@ -703,6 +727,27 @@ function normalizeToList(val) {
   const s = asTrim(val);
   if (!s) return [];
   return s.split(/[;,]/g).map(asTrim).filter(Boolean);
+}
+
+/* ───────────────────── URL Helpers ───────────────────── */
+
+function normalizeBaseUrl(baseSiteUrl) {
+  const base = String(baseSiteUrl || "").trim().replace(/\/+$/g, "");
+  if (!base) return "";
+  if (/^https?:\/\//i.test(base)) return base;
+  return "https://" + base;
+}
+
+function absolutizeUrlMaybe(url, baseSiteUrl) {
+  const u = String(url || "").trim();
+  if (!u) return "";
+  if (/^https?:\/\//i.test(u)) return u;
+
+  const base = normalizeBaseUrl(baseSiteUrl);
+  if (!base) return u;
+
+  if (u.startsWith("/")) return base + u;
+  return base + "/" + u;
 }
 
 /* ───────────── HTML Builders ───────────── */
@@ -717,6 +762,7 @@ function buildNewShowingEmailHtml({
   links,
   timeZone,
   linksExpireDays,
+  siteBaseUrl,
 }) {
   const c = copyForLang(lang);
 
@@ -736,6 +782,7 @@ function buildNewShowingEmailHtml({
   const tz =
     String(
       (property && property.timeZone) ||
+        (showing && showing.requestedTimeZone) ||
         (showing && showing.propertyTimeZoneSnapshot) ||
         timeZone ||
         "America/New_York"
@@ -744,8 +791,11 @@ function buildNewShowingEmailHtml({
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
   const statusLabel = String(showing?.statusLabel || "").trim();
 
-  // ✅ NO approve/decline at all. ONLY manage link.
-  const manageUrl = String((links && (links.manageUrl || links.managePath)) || "").trim();
+  // ✅ Manage only. Also ensure ABSOLUTE URL.
+  const rawManage =
+    String((links && (links.manageUrl || links.managePath)) || "").trim();
+
+  const manageUrl = absolutizeUrlMaybe(rawManage, siteBaseUrl || "");
 
   const expireDays = Number(linksExpireDays || 0) || 0;
   const expireLine =
@@ -754,8 +804,6 @@ function buildNewShowingEmailHtml({
            ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(expireDays === 1 ? "day" : "days")}.
          </div>`
       : "";
-
-  const actionButton = primaryButton(manageUrl, c.manage);
 
   const sections = `
     ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
@@ -781,7 +829,7 @@ function buildNewShowingEmailHtml({
     </div>
 
     <div style="margin:18px 0 8px 0;">
-      ${actionButton || ""}
+      ${primaryButton(manageUrl, c.manage)}
     </div>
 
     ${
@@ -815,6 +863,8 @@ function buildBuyerReceivedEmailHtml({
   buyer,
   showing,
   timeZone,
+  linksExpireDays,
+  agent,
 }) {
   const c = copyForLang(lang);
 
@@ -826,9 +876,13 @@ function buildBuyerReceivedEmailHtml({
     ? `<img src="${escapeHtml(imgUrl)}" alt="Property" style="width:100%;max-width:560px;border-radius:12px;display:block;margin:0 auto 16px auto;" />`
     : "";
 
+  const buyerFirst = String(buyer?.firstName || "").trim();
+  const greetingName = buyerFirst || "there";
+
   const tz =
     String(
       (property && property.timeZone) ||
+        (showing && showing.requestedTimeZone) ||
         (showing && showing.propertyTimeZoneSnapshot) ||
         timeZone ||
         "America/New_York"
@@ -836,15 +890,46 @@ function buildBuyerReceivedEmailHtml({
 
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
 
-  const agentEmail = String((showing?.agent?.email || "")).trim();
-  const agentPhone = String((showing?.agent?.phone || showing?.agent?.mobile || "")).trim();
-  const agentDisplayName = String(agentName || "").trim();
+  const statusLabel = String(showing?.statusLabel || "").trim();
+  const lowerStatus = String(statusLabel || "").toLowerCase();
+  const waitlistNote =
+    lowerStatus.includes("wait") || lowerStatus.includes("coming") ? c.waitlistNote : "";
+
+  const buyerHasAgentText = String(buyer?.buyerHasAgentText || "").trim();
+
+  const agentPhone = String(agent?.phone || "").trim();
+  const agentEmail = String(agent?.email || "").trim();
+
+  const agentContactBlock =
+    (agentName || agentPhone || agentEmail)
+      ? `
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.agentSectionLabel)}</div>
+      <div style="font-size:14px;line-height:1.6;">
+        <div>${escapeHtml(agentName || "Agent")}</div>
+        ${agentPhone ? `<div>${escapeHtml(agentPhone)}</div>` : ""}
+        ${agentEmail ? `<div><a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a></div>` : ""}
+      </div>
+    </div>
+  `.trim()
+      : "";
+
+  const expireDays = Number(linksExpireDays || 0) || 0;
+  const expireLine =
+    expireDays > 0
+      ? `<div style="font-size:12px;color:#666;margin-top:10px;">
+           ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(expireDays === 1 ? "day" : "days")}.
+         </div>`
+      : "";
 
   const sections = `
-    <div style="margin:0 0 14px 0;">${infoPill(c.headingReceived)}</div>
+    ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
 
-    <div style="font-size:14px;line-height:1.6;margin:0 0 14px 0;">
-      ${escapeHtml(c.receivedIntro)}
+    <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
+      <div>Hi ${escapeHtml(greetingName)},</div>
+      <div>${escapeHtml(c.receivedIntro)}</div>
+      ${waitlistNote ? `<div style="margin-top:10px;">${escapeHtml(waitlistNote)}</div>` : ""}
+      ${buyerHasAgentText ? `<div style="margin-top:10px;"><strong>${escapeHtml(c.buyerAgentNoteLabel)}:</strong> ${escapeHtml(buyerHasAgentText)}</div>` : ""}
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
@@ -853,26 +938,21 @@ function buildBuyerReceivedEmailHtml({
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requestedTime)}</div>
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requestedTime)} (Property Time)</div>
       <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
     </div>
 
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.agentSectionLabel)}</div>
-      <div style="font-size:14px;line-height:1.6;">
-        <div>${escapeHtml(agentDisplayName || "—")}</div>
-        ${agentEmail ? `<div><a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a></div>` : ""}
-        ${agentPhone ? `<div>${escapeHtml(agentPhone)}</div>` : ""}
-      </div>
+    ${agentContactBlock ? agentContactBlock : ""}
+
+    <div style="margin-top:10px;">
+      <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${escapeHtml(c.whatNext)}</div>
+      <ul style="margin:0;padding-left:18px;color:#111;font-size:14px;line-height:1.6;">
+        <li>${escapeHtml(c.next1)}</li>
+        <li>${escapeHtml(c.next2)}</li>
+      </ul>
     </div>
 
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:14px;font-weight:700;margin-bottom:8px;">${escapeHtml(c.whatNext)}</div>
-      <div style="font-size:14px;line-height:1.7;">
-        <div>• ${escapeHtml(c.next1)}</div>
-        <div>• ${escapeHtml(c.next2)}</div>
-      </div>
-    </div>
+    ${expireLine}
   `.trim();
 
   return emailShell({
@@ -885,6 +965,12 @@ function buildBuyerReceivedEmailHtml({
   });
 }
 
+function capFirst(s) {
+  const v = String(s || "").trim();
+  if (!v) return "";
+  return v.charAt(0).toUpperCase() + v.slice(1).toLowerCase();
+}
+
 function buildBuyerStatusEmailHtml({
   lang,
   brokerageName,
@@ -894,8 +980,10 @@ function buildBuyerStatusEmailHtml({
   showing,
   status,
   declineReasonLabel,
-  links,
   timeZone,
+  links,
+  agent,
+  linksExpireDays,
 }) {
   const c = copyForLang(lang);
 
@@ -907,9 +995,13 @@ function buildBuyerStatusEmailHtml({
     ? `<img src="${escapeHtml(imgUrl)}" alt="Property" style="width:100%;max-width:560px;border-radius:12px;display:block;margin:0 auto 16px auto;" />`
     : "";
 
+  const buyerFirst = String(buyer?.firstName || "").trim();
+  const greetingName = buyerFirst || "there";
+
   const tz =
     String(
       (property && property.timeZone) ||
+        (showing && showing.requestedTimeZone) ||
         (showing && showing.propertyTimeZoneSnapshot) ||
         timeZone ||
         "America/New_York"
@@ -917,20 +1009,58 @@ function buildBuyerStatusEmailHtml({
 
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
 
-  const statusNorm = String(status || "").toLowerCase();
-  const isApproved = statusNorm.includes("approve") || statusNorm.includes("confirm") || statusNorm === "approved";
-  const isDeclined = statusNorm.includes("decline") || statusNorm.includes("reject") || statusNorm === "declined";
+  const statusNorm = capFirst(status);
+  const isApproved = statusNorm === "Approved";
 
-  const heading = isApproved ? c.headingApproved : isDeclined ? c.headingDeclined : "Update";
-  const bodyLine = isApproved ? c.approvedBody : isDeclined ? c.declinedBody : "There is an update to your showing request.";
+  const heading = isApproved ? c.headingApproved : c.headingDeclined;
+  const intro = isApproved ? c.approvedBody : c.declinedBody;
 
-  const schedulerUrl = String((links && (links.schedulerUrl || links.propertyUrl)) || "").trim();
+  const statusLabel = String(showing?.statusLabel || "").trim();
+  const schedulerUrl = String((links && links.schedulerUrl) || "").trim();
+
+  const agentPhone = String(agent?.phone || "").trim();
+  const agentEmail = String(agent?.email || "").trim();
+
+  const agentContactLine =
+    agentName || agentPhone || agentEmail
+      ? `
+      <div style="margin-top:10px;font-size:14px;line-height:1.6;">
+        <div><strong>Agent Contact:</strong> ${escapeHtml(agentName || "Agent")}</div>
+        ${agentPhone ? `<div>${escapeHtml(agentPhone)}</div>` : ""}
+        ${agentEmail ? `<div><a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a></div>` : ""}
+      </div>
+    `.trim()
+      : "";
+
+  const reasonBlock =
+    !isApproved && String(declineReasonLabel || "").trim()
+      ? `
+      <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+        <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.reasonLabel)}</div>
+        <div style="font-size:14px;line-height:1.4;">${escapeHtml(declineReasonLabel)}</div>
+      </div>
+    `.trim()
+      : "";
+
+  const rescheduleBlock =
+    !isApproved && schedulerUrl
+      ? `<div style="margin:14px 0 8px 0;">${primaryButton(schedulerUrl, c.rescheduleBtn)}</div>`
+      : "";
+
+  const expireDays = Number(linksExpireDays || 0) || 0;
+  const expireLine =
+    expireDays > 0
+      ? `<div style="font-size:12px;color:#666;margin-top:10px;">
+           ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(expireDays === 1 ? "day" : "days")}.
+         </div>`
+      : "";
 
   const sections = `
-    <div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${String(status || showing?.statusLabel || "Updated")}`)}</div>
+    ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
 
-    <div style="font-size:14px;line-height:1.6;margin:0 0 14px 0;">
-      ${escapeHtml(bodyLine)}
+    <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
+      <div>Hi ${escapeHtml(greetingName)},</div>
+      <div>${escapeHtml(intro)}</div>
     </div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
@@ -943,28 +1073,32 @@ function buildBuyerStatusEmailHtml({
       <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
     </div>
 
+    ${reasonBlock}
+
+    ${agentContactLine ? agentContactLine : ""}
+
     ${
-      isDeclined && declineReasonLabel
+      isApproved
         ? `
-      <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-        <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.reasonLabel)}</div>
-        <div style="font-size:14px;line-height:1.4;">${escapeHtml(declineReasonLabel)}</div>
+      <div style="margin-top:12px;font-size:13px;color:#111;">
+        ${escapeHtml(c.cancelRescheduleLine)}
       </div>`
         : ""
     }
 
+    ${rescheduleBlock}
+
     ${
-      isDeclined && schedulerUrl
+      !isApproved && (agentPhone || agentEmail)
         ? `
-      <div style="margin:18px 0 8px 0;">
-        ${primaryButton(schedulerUrl, c.rescheduleBtn)}
+      <div style="margin-top:10px;font-size:13px;color:#111;">
+        ${escapeHtml(c.contactLinePrefix)} ${escapeHtml(agentName || "the agent")}
+        ${agentPhone ? ` at ${escapeHtml(agentPhone)}` : ""}${agentEmail ? ` or <a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a>` : ""}.
       </div>`
         : ""
     }
 
-    <div style="font-size:13px;color:#555;margin-top:12px;">
-      <strong>${escapeHtml(c.contactLinePrefix)}</strong> ${escapeHtml(c.cancelRescheduleLine)}
-    </div>
+    ${expireLine}
   `.trim();
 
   return emailShell({
@@ -977,83 +1111,85 @@ function buildBuyerStatusEmailHtml({
   });
 }
 
-/* ───────────────────── Auth for /showings/* routes ───────────────────── */
+/* ───────────────────── Protected endpoints from Wix backend ───────────────────── */
 
 function isAuthorized(req) {
-  const header = String(req.headers["x-clario-secret"] || "").trim();
-  const token =
-    String(process.env.CLARIO_SHOWINGS_EMAIL_TOKEN || "").trim() ||
-    String(process.env.CLARIO_EMAIL_WEBHOOK_SECRET || "").trim();
+  const expectedEnv =
+    process.env.CLARIO_SHOWINGS_EMAIL_TOKEN ||
+    process.env.CLARIO_EMAIL_WEBHOOK_SECRET ||
+    "";
 
-  if (!token) {
-    console.warn("[ShowingsRoute] ⚠️ No server token set (CLARIO_SHOWINGS_EMAIL_TOKEN). Rejecting.");
-    return false;
-  }
-  return header && token && header === token;
-}
+  const LEGACY_TRIGGER_TOKEN = "cLaRIo134679LLcAppS2025ClAriOaPPs";
 
-/* ───────────────────── /showings/new-request ─────────────────────
-   Agent/Admin email: NEW SHOWING REQUEST
-   IMPORTANT: NO approve/decline buttons. ONLY "Manage Showing".
-------------------------------------------------------------------- */
-app.post("/showings/new-request", async (req, res) => {
-  console.log("[ShowingsRoute] hit /showings/new-request", {
-    reqId: req.headers["x-clario-reqid"] || "",
-    hasBody: !!req.body,
-    contentType: req.headers["content-type"] || "",
-  });
+  const got = String(req.headers["x-clario-secret"] || "");
+  const ok =
+    (!!expectedEnv && got === String(expectedEnv)) ||
+    (!!LEGACY_TRIGGER_TOKEN && got === String(LEGACY_TRIGGER_TOKEN));
 
   try {
+    console.log("[ShowingsAuth] CHECK", {
+      ok,
+      expectedEnvSet: !!expectedEnv,
+      expectedEnvPrefix: expectedEnv ? String(expectedEnv).slice(0, 6) + "..." : "",
+      legacyEnabled: !!LEGACY_TRIGGER_TOKEN,
+      gotPrefix: got ? String(got).slice(0, 6) + "..." : "",
+      path: req.path,
+      reqId: req.headers["x-clario-reqid"] || "",
+    });
+  } catch (_e) {}
+
+  return ok;
+}
+
+/* ───────────────────── /showings/new-request ───────────────────── */
+
+app.post("/showings/new-request", async (req, res) => {
+  try {
+    console.log("[ShowingsRoute] HANDLER START /showings/new-request", {
+      reqId: req.headers["x-clario-reqid"] || "",
+    });
+
     if (!isAuthorized(req)) {
-      console.warn("[ShowingsRoute] unauthorized /showings/new-request");
+      console.log("[ShowingsRoute] UNAUTHORIZED /showings/new-request", {
+        reqId: req.headers["x-clario-reqid"] || "",
+      });
       return res.status(401).send("unauthorized");
     }
 
-    const payload = req.body || {};
-    const lang = normalizeLang(payload.language || "en");
+    const body = req.body || {};
 
-    const to = normalizeToList(payload.to);
-    const brokerageName = String(payload.brokerageName || "").trim();
-    const agentName = String(payload.agentName || "").trim();
+    const lang = normalizeLang(body.language);
+    const brokerageName = body.brokerageName || "";
+    const agentName = body.agentName || "";
 
-    const property = payload.property || {};
-    const buyer = payload.buyer || {};
-    const showing = payload.showing || {};
-    const links = payload.links || {};
-    const timeZone = payload.timeZone || property.timeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
+    const property = body.property || {};
+    const buyer = body.buyer || {};
+    const showing = body.showing || {};
+    const links = body.links || {};
 
-    const linksExpireDays = payload.linksExpireDays || 7;
+    const linksExpireDays = body.linksExpireDays || body.links_expire_days || 0;
 
-    // Ensure date/time always has fallbacks available
-    const showingMerged = {
-      ...showing,
-      id: showing.id || showing.showingId || payload.showingId || payload.id || "",
-      propertyTimeZoneSnapshot: showing.propertyTimeZoneSnapshot || timeZone,
-      requestedStartDisplayProperty:
-        showing.requestedStartDisplayProperty ||
-        showing.requestedStartDisplayCombined ||
-        showing.requestedTimeDisplay ||
-        "",
-      requestedStart:
-        showing.requestedStart ||
-        showing.requestedStartUtc ||
-        showing.slotStart ||
-        showing.start ||
-        showing.startTime ||
-        showing.dateTime ||
-        "",
-      requestedStartUtc: showing.requestedStartUtc || showing.requestedStartUTC || "",
-      slotStart: showing.slotStart || showing.slotStartUtc || showing.slotStartUTC || "",
-      start: showing.start || showing.startUtc || showing.startUTC || "",
-    };
+    const timeZone =
+      body.timeZone || property.timeZone || showing.requestedTimeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
 
-    const linksMerged = {
-      ...links,
-      manageUrl: links.manageUrl || links.managePath || "",
-    };
+    const siteBaseUrl = body.siteBaseUrl || body.baseSiteUrl || "";
 
-    const addressShort = subjectAddressShort(property);
-    const subject = `${copyForLang(lang).subjectNew}: ${addressShort}`;
+    let to = normalizeToList(body.to);
+
+    const agentEmailFallback = firstEmailFromAny(
+      body?.agent?.email,
+      body.agentEmail,
+      body.agent_email,
+      body?.agent?.assignedAgentEmail,
+      body?.agent?.assignedAgentEmailSnapshot
+    );
+
+    if (to.length === 0 && agentEmailFallback) to = [agentEmailFallback];
+    if (to.length === 0 && ADMIN_EMAIL) to = [ADMIN_EMAIL];
+
+    const c = copyForLang(lang);
+    const subjectBase = c.subjectNew;
+    const subject = `${subjectBase} — ${subjectAddressShort(property)}`;
 
     const html = buildNewShowingEmailHtml({
       lang,
@@ -1061,173 +1197,90 @@ app.post("/showings/new-request", async (req, res) => {
       agentName,
       property,
       buyer,
-      showing: showingMerged,
-      links: linksMerged,
+      showing,
+      links,
       timeZone,
       linksExpireDays,
+      siteBaseUrl,
     });
 
-    await sendEmail({
+    const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
+    const fromName = brokerageName || agentName || "Showing Scheduler";
+
+    const rawManage =
+      String((links && (links.manageUrl || links.managePath)) || "").trim();
+
+    const finalManage = absolutizeUrlMaybe(rawManage, siteBaseUrl || "");
+
+    console.log("[ShowingsRoute] /showings/new-request computed", {
       to,
-      subject,
-      html,
-      fromName: brokerageName || "Clario Showings",
+      replyTo: replyTo || "",
+      requestedText: safeDisplayTimeOnlyProperty({ showing, timeZone, lang }),
+      siteBaseUrl: siteBaseUrl || "",
+      rawManageUrl: rawManage,
+      manageUrlFinal: finalManage,
     });
 
+    await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
   } catch (err) {
-    console.error("[ShowingsRoute] /showings/new-request error:", err);
+    console.error("❌ /showings/new-request failed:", err);
     return res.status(500).send("error");
   }
 });
 
-/* ───────────────────── /showings/buyer-received ─────────────────────
-   Buyer email: REQUEST RECEIVED
-------------------------------------------------------------------- */
-app.post("/showings/buyer-received", async (req, res) => {
-  console.log("[ShowingsRoute] hit /showings/buyer-received", {
-    reqId: req.headers["x-clario-reqid"] || "",
-    hasBody: !!req.body,
-    contentType: req.headers["content-type"] || "",
-  });
+/* ───────────────────── /showings/buyer-status ───────────────────── */
 
-  try {
-    if (!isAuthorized(req)) {
-      console.warn("[ShowingsRoute] unauthorized /showings/buyer-received");
-      return res.status(401).send("unauthorized");
-    }
-
-    const payload = req.body || {};
-    const lang = normalizeLang(payload.language || "en");
-
-    const to = normalizeToList(payload.to);
-    const brokerageName = String(payload.brokerageName || "").trim();
-    const agentName = String(payload.agentName || "").trim();
-
-    const property = payload.property || {};
-    const buyer = payload.buyer || {};
-    const showing = payload.showing || {};
-    const timeZone = payload.timeZone || property.timeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
-
-    const showingMerged = {
-      ...showing,
-      id: showing.id || showing.showingId || payload.showingId || payload.id || "",
-      propertyTimeZoneSnapshot: showing.propertyTimeZoneSnapshot || timeZone,
-      requestedStartDisplayProperty:
-        showing.requestedStartDisplayProperty ||
-        showing.requestedStartDisplayCombined ||
-        showing.requestedTimeDisplay ||
-        "",
-      requestedStart:
-        showing.requestedStart ||
-        showing.requestedStartUtc ||
-        showing.slotStart ||
-        showing.start ||
-        showing.startTime ||
-        showing.dateTime ||
-        "",
-      requestedStartUtc: showing.requestedStartUtc || showing.requestedStartUTC || "",
-      slotStart: showing.slotStart || showing.slotStartUtc || showing.slotStartUTC || "",
-      start: showing.start || showing.startUtc || showing.startUTC || "",
-      agent: payload.agent || payload.agentSnapshot || payload.assignedAgent || payload.agentInfo || payload.agent || {},
-    };
-
-    const addressShort = subjectAddressShort(property);
-    const subject = `${copyForLang(lang).subjectReceived}: ${addressShort}`;
-
-    const html = buildBuyerReceivedEmailHtml({
-      lang,
-      brokerageName,
-      agentName,
-      property,
-      buyer,
-      showing: showingMerged,
-      timeZone,
-    });
-
-    await sendEmail({
-      to,
-      subject,
-      html,
-      fromName: brokerageName || "Clario Showings",
-    });
-
-    return res.status(200).send("ok");
-  } catch (err) {
-    console.error("[ShowingsRoute] /showings/buyer-received error:", err);
-    return res.status(500).send("error");
-  }
-});
-
-/* ───────────────────── /showings/buyer-status ─────────────────────
-   Buyer email: APPROVED / DECLINED update
-------------------------------------------------------------------- */
 app.post("/showings/buyer-status", async (req, res) => {
-  console.log("[ShowingsRoute] hit /showings/buyer-status", {
-    reqId: req.headers["x-clario-reqid"] || "",
-    hasBody: !!req.body,
-    contentType: req.headers["content-type"] || "",
-  });
-
   try {
+    console.log("[ShowingsRoute] HANDLER START /showings/buyer-status", {
+      reqId: req.headers["x-clario-reqid"] || "",
+    });
+
     if (!isAuthorized(req)) {
-      console.warn("[ShowingsRoute] unauthorized /showings/buyer-status");
+      console.log("[ShowingsRoute] UNAUTHORIZED /showings/buyer-status", {
+        reqId: req.headers["x-clario-reqid"] || "",
+      });
       return res.status(401).send("unauthorized");
     }
 
-    const payload = req.body || {};
-    const lang = normalizeLang(payload.language || "en");
+    const body = req.body || {};
 
-    const to = normalizeToList(payload.to);
-    const brokerageName = String(payload.brokerageName || "").trim();
-    const agentName = String(payload.agentName || "").trim();
+    const lang = normalizeLang(body.language);
+    const brokerageName = body.brokerageName || "";
+    const agentName = body.agentName || "";
 
-    const property = payload.property || {};
-    const buyer = payload.buyer || {};
-    const showing = payload.showing || {};
-    const links = payload.links || {};
-    const timeZone = payload.timeZone || property.timeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
+    const property = body.property || {};
+    const buyer = body.buyer || {};
+    const showing = body.showing || {};
+    const links = body.links || {};
+    const agent = body.agent || {};
 
-    const status = String(payload.status || "").trim();
-    const declineReasonLabel = String(payload.declineReasonLabel || "").trim();
+    const linksExpireDays = body.linksExpireDays || body.links_expire_days || 0;
 
-    const showingMerged = {
-      ...showing,
-      id: showing.id || showing.showingId || payload.showingId || payload.id || "",
-      propertyTimeZoneSnapshot: showing.propertyTimeZoneSnapshot || timeZone,
-      requestedStartDisplayProperty:
-        showing.requestedStartDisplayProperty ||
-        showing.requestedStartDisplayCombined ||
-        showing.requestedTimeDisplay ||
-        "",
-      requestedStart:
-        showing.requestedStart ||
-        showing.requestedStartUtc ||
-        showing.slotStart ||
-        showing.start ||
-        showing.startTime ||
-        showing.dateTime ||
-        "",
-      requestedStartUtc: showing.requestedStartUtc || showing.requestedStartUTC || "",
-      slotStart: showing.slotStart || showing.slotStartUtc || showing.slotStartUTC || "",
-      start: showing.start || showing.startUtc || showing.startUTC || "",
-    };
+    const status = body.status || body.showingStatus || "";
+    const declineReasonLabel =
+      body.declineReasonLabel || (body.declineReason && body.declineReason.label) || "";
 
-    const linksMerged = {
-      ...links,
-      schedulerUrl: links.schedulerUrl || links.propertyUrl || "",
-      propertyUrl: links.propertyUrl || links.schedulerUrl || "",
-    };
+    const timeZone =
+      body.timeZone || property.timeZone || showing.requestedTimeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
 
-    const addressShort = subjectAddressShort(property);
-    const baseSubject = (() => {
-      const statusNorm = status.toLowerCase();
-      if (statusNorm.includes("approve") || statusNorm.includes("confirm")) return copyForLang(lang).subjectApproved;
-      if (statusNorm.includes("decline") || statusNorm.includes("reject")) return copyForLang(lang).subjectDeclined;
-      return "Showing Update";
-    })();
+    const buyerEmail = firstEmailFromAny(
+      buyer?.email,
+      body?.buyerEmail,
+      body?.buyer_email,
+      body?.email,
+      body?.leadEmail
+    );
 
-    const subject = `${baseSubject}: ${addressShort}`;
+    const to = buyerEmail ? [buyerEmail] : [];
+
+    const c = copyForLang(lang);
+    const statusNorm = capFirst(status);
+    const isApproved = statusNorm === "Approved";
+
+    const subjectBase = isApproved ? c.subjectApproved : c.subjectDeclined;
+    const subject = `${subjectBase} — ${subjectAddressShort(property)}`;
 
     const html = buildBuyerStatusEmailHtml({
       lang,
@@ -1235,123 +1288,251 @@ app.post("/showings/buyer-status", async (req, res) => {
       agentName,
       property,
       buyer,
-      showing: showingMerged,
-      status,
+      showing,
+      status: statusNorm,
       declineReasonLabel,
-      links: linksMerged,
       timeZone,
+      links,
+      agent,
+      linksExpireDays,
     });
 
-    await sendEmail({
+    const replyTo = String(agent?.email || body.agentEmail || body.agent_email || "").trim();
+    const fromName = brokerageName || agentName || "Showing Scheduler";
+
+    console.log("[ShowingsRoute] /showings/buyer-status computed", {
       to,
-      subject,
-      html,
-      fromName: brokerageName || "Clario Showings",
+      replyTo: replyTo || "",
+      status: statusNorm,
+      requestedText: safeDisplayTimeOnlyProperty({ showing, timeZone, lang }),
     });
 
+    await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
   } catch (err) {
-    console.error("[ShowingsRoute] /showings/buyer-status error:", err);
+    console.error("❌ /showings/buyer-status failed:", err);
     return res.status(500).send("error");
   }
 });
 
-/* ───────────────────── Wix Webhooks (Commission/KPI/Mortgage) ───────────────────── */
+/* ───────────────────── /showings/buyer-received ───────────────────── */
 
-async function verifyAndDecodeInstance({ verifier, rawBody, signatureHeader }) {
-  // Wix sends the instance in the signature header for app lifecycle events.
-  // In many older implementations, the request verification is done using appInstances.parseAppInstance.
-  // We keep it defensive and log failures clearly.
+app.post("/showings/buyer-received", async (req, res) => {
   try {
-    const instanceId = String(signatureHeader || "").trim();
-    if (!instanceId) {
-      return { ok: false, reason: "missing_instance_header" };
-    }
-
-    const decoded = await verifier.appInstances.parseAppInstance({
-      instanceId,
-      // rawBody isn't always required for parseAppInstance; but keep for parity/logging.
+    console.log("[ShowingsRoute] HANDLER START /showings/buyer-received", {
+      reqId: req.headers["x-clario-reqid"] || "",
     });
 
-    return { ok: true, instanceId, decoded };
-  } catch (e) {
-    return { ok: false, reason: "parse_failed", error: e };
-  }
-}
+    if (!isAuthorized(req)) {
+      console.log("[ShowingsRoute] UNAUTHORIZED /showings/buyer-received", {
+        reqId: req.headers["x-clario-reqid"] || "",
+      });
+      return res.status(401).send("unauthorized");
+    }
 
-async function handleWebhookGeneric(req, res, appLabel, appKey, verifier) {
-  try {
-    const raw = String(req.body || "");
-    const sig = String(req.headers["x-wix-instance-id"] || req.headers["x-wix-application-instance-id"] || "").trim();
+    const body = req.body || {};
 
-    console.log(`[Webhook] ${appLabel} inbound`, {
-      hasRawBody: !!raw,
-      rawLen: raw.length,
-      sigPresent: !!sig,
+    const lang = normalizeLang(body.language);
+    const brokerageName = body.brokerageName || "";
+    const agentName = body.agentName || "";
+
+    const property = body.property || {};
+    const buyer = body.buyer || {};
+    const showing = body.showing || {};
+    const agent = body.agent || {};
+
+    const linksExpireDays = body.linksExpireDays || body.links_expire_days || 0;
+
+    const timeZone =
+      body.timeZone || property.timeZone || showing.requestedTimeZone || showing.propertyTimeZoneSnapshot || "America/New_York";
+
+    const buyerEmail = firstEmailFromAny(
+      buyer?.email,
+      body?.buyerEmail,
+      body?.buyer_email,
+      body?.email,
+      body?.leadEmail
+    );
+
+    const to = buyerEmail ? [buyerEmail] : [];
+
+    const c = copyForLang(lang);
+    const subject = `${c.subjectReceived} — ${subjectAddressShort(property)}`;
+
+    const html = buildBuyerReceivedEmailHtml({
+      lang,
+      brokerageName,
+      agentName,
+      property,
+      buyer,
+      showing,
+      timeZone,
+      linksExpireDays,
+      agent,
     });
 
-    // Try to parse JSON payload
-    let event = null;
-    try {
-      event = raw ? JSON.parse(raw) : null;
-    } catch (e) {
-      console.warn(`[Webhook] ${appLabel} JSON parse failed`);
-    }
+    const replyTo = String((agent && agent.email) || (body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
+    const fromName = brokerageName || agentName || "Showing Scheduler";
 
-    if (!event) {
-      return res.status(400).send("bad_request");
-    }
+    console.log("[ShowingsRoute] /showings/buyer-received computed", {
+      to,
+      replyTo: replyTo || "",
+      requestedText: safeDisplayTimeOnlyProperty({ showing, timeZone, lang }),
+      agentEmail: String(agent?.email || "").trim(),
+      agentPhone: String(agent?.phone || "").trim(),
+    });
 
-    // Note: If you already have working verification logic elsewhere, keep it.
-    // This generic path is intentionally light and focuses on not breaking showings.
-    const type = event?.eventType || event?.eventName || event?.type || "";
-    console.log(`[Webhook] ${appLabel} event`, { type, instanceId: event.instanceId || "N/A" });
-
-    // Route lifecycle events if present
-    if (type === "APP_INSTALLED" || type === "AppInstalled") {
-      await handleAppInstalled(event, appLabel, appKey);
-    } else if (type === "PAID_PLAN_PURCHASED" || type === "PaidPlanPurchased") {
-      await handlePaidPlanPurchased(event, appLabel, appKey);
-    } else if (type === "PAID_PLAN_AUTO_RENEWAL_CANCELLED" || type === "PaidPlanAutoRenewalCancelled") {
-      await handlePaidPlanAutoRenewalCancelled(event, appLabel, appKey);
-    } else if (type === "PAID_PLAN_REACTIVATED" || type === "PaidPlanReactivated") {
-      await handlePaidPlanReactivated(event, appLabel, appKey);
-    } else if (type === "PAID_PLAN_CONVERTED_TO_PAID" || type === "PaidPlanConvertedToPaid") {
-      await handlePaidPlanConvertedToPaid(event, appLabel, appKey);
-    } else if (type === "PAID_PLAN_TRANSFERRED" || type === "PaidPlanTransferred") {
-      await handlePaidPlanTransferred(event, appLabel, appKey);
-    } else if (type === "APP_REMOVED" || type === "AppRemoved") {
-      await handleAppRemoved(event, appLabel, appKey);
-    } else {
-      // Keep silent-ish for unknown events
-      console.log(`[Webhook] ${appLabel} unhandled event type:`, type);
-    }
-
+    await sendEmail({ to, subject, html, fromName, replyTo });
     return res.status(200).send("ok");
   } catch (err) {
-    console.error(`[Webhook] ${appLabel} error:`, err);
+    console.error("❌ /showings/buyer-received failed:", err);
     return res.status(500).send("error");
   }
-}
+});
+
+/* ───────────────────── Webhooks ───────────────────── */
 
 app.post("/webhook", async (req, res) => {
-  return handleWebhookGeneric(req, res, "Commission Calculator", "commission", verifierCommission);
+  console.log("===== [Commission Calculator] Webhook received =====");
+  console.log("Raw body:", req.body);
+
+  try {
+    const event = await verifierCommission.webhooks.process(req.body);
+    console.log("Decoded event (Commission):", JSON.stringify(event, null, 2));
+
+    const appLabel = "Clario Commission Calculator";
+    switch (event.eventType) {
+      case "AppInstalled":
+        await handleAppInstalled(event, appLabel, "commission");
+        break;
+      case "PaidPlanPurchased":
+        await handlePaidPlanPurchased(event, appLabel, "commission");
+        break;
+      case "PaidPlanAutoRenewalCancelled":
+        await handlePaidPlanAutoRenewalCancelled(event, appLabel, "commission");
+        break;
+      case "PaidPlanReactivated":
+      case "PlanReactivated":
+        await handlePaidPlanReactivated(event, appLabel, "commission");
+        break;
+      case "PaidPlanConvertedToPaid":
+      case "PlanConvertedToPaid":
+        await handlePaidPlanConvertedToPaid(event, appLabel, "commission");
+        break;
+      case "PaidPlanTransferred":
+      case "PlanTransferred":
+        await handlePaidPlanTransferred(event, appLabel, "commission");
+        break;
+      case "AppRemoved":
+        await handleAppRemoved(event, appLabel, "commission");
+        break;
+      default:
+        console.log("[Commission] Unhandled event type:", event.eventType);
+    }
+  } catch (err) {
+    console.error("[Commission] webhooks.process failed:", err);
+  }
+
+  res.status(200).send("ok");
 });
 
 app.post("/webhook-kpi", async (req, res) => {
-  return handleWebhookGeneric(req, res, "Transactions KPI", "kpi", verifierKpi);
+  console.log("===== [Transactions KPI] Webhook received =====");
+  console.log("Raw body:", req.body);
+
+  try {
+    const event = await verifierKpi.webhooks.process(req.body);
+    console.log("Decoded event (KPI):", JSON.stringify(event, null, 2));
+
+    const appLabel = "Clario Transactions KPI";
+    switch (event.eventType) {
+      case "AppInstalled":
+        await handleAppInstalled(event, appLabel, "kpi");
+        break;
+      case "PaidPlanPurchased":
+        await handlePaidPlanPurchased(event, appLabel, "kpi");
+        break;
+      case "PaidPlanAutoRenewalCancelled":
+        await handlePaidPlanAutoRenewalCancelled(event, appLabel, "kpi");
+        break;
+      case "PaidPlanReactivated":
+      case "PlanReactivated":
+        await handlePaidPlanReactivated(event, appLabel, "kpi");
+        break;
+      case "PaidPlanConvertedToPaid":
+      case "PlanConvertedToPaid":
+        await handlePaidPlanConvertedToPaid(event, appLabel, "kpi");
+        break;
+      case "PaidPlanTransferred":
+      case "PlanTransferred":
+        await handlePaidPlanTransferred(event, appLabel, "kpi");
+        break;
+      case "AppRemoved":
+        await handleAppRemoved(event, appLabel, "kpi");
+        break;
+      default:
+        console.log("[KPI] Unhandled event type:", event.eventType);
+    }
+  } catch (err) {
+    console.error("[KPI] webhooks.process failed:", err);
+  }
+
+  res.status(200).send("ok");
 });
 
 app.post("/webhook-mortgage", async (req, res) => {
-  return handleWebhookGeneric(req, res, "3-in-1 Mortgage Calculator", "mortgage", verifierMortgage);
+  console.log("===== [Mortgage] Webhook received =====");
+  console.log("Raw body:", req.body);
+
+  try {
+    const event = await verifierMortgage.webhooks.process(req.body);
+    console.log("Decoded event (Mortgage):", JSON.stringify(event, null, 2));
+
+    const appLabel = "Clario 3-in-1 Mortgage Calculator";
+    switch (event.eventType) {
+      case "AppInstalled":
+        await handleAppInstalled(event, appLabel, "mortgage");
+        break;
+      case "PaidPlanPurchased":
+        await handlePaidPlanPurchased(event, appLabel, "mortgage");
+        break;
+      case "PaidPlanAutoRenewalCancelled":
+        await handlePaidPlanAutoRenewalCancelled(event, appLabel, "mortgage");
+        break;
+      case "PaidPlanReactivated":
+      case "PlanReactivated":
+        await handlePaidPlanReactivated(event, appLabel, "mortgage");
+        break;
+      case "PaidPlanConvertedToPaid":
+      case "PlanConvertedToPaid":
+        await handlePaidPlanConvertedToPaid(event, appLabel, "mortgage");
+        break;
+      case "PaidPlanTransferred":
+      case "PlanTransferred":
+        await handlePaidPlanTransferred(event, appLabel, "mortgage");
+        break;
+      case "AppRemoved":
+        await handleAppRemoved(event, appLabel, "mortgage");
+        break;
+      default:
+        console.log("[Mortgage] Unhandled event type:", event.eventType);
+    }
+  } catch (err) {
+    console.error("[Mortgage] webhooks.process failed:", err);
+  }
+
+  res.status(200).send("ok");
 });
 
-/* ───────────────────── Health + Startup ───────────────────── */
+/* ───────────────────── Health ───────────────────── */
 
-app.get("/", (_req, res) => res.status(200).send("ok"));
+app.get("/health", (_req, res) => {
+  res.status(200).send("ok");
+});
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-  console.log(`✅ Server running on port ${port}`);
-  console.log("✅ Showings routes enabled: /showings/new-request, /showings/buyer-received, /showings/buyer-status");
+/* ───────────────────── Start server ───────────────────── */
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Webhook server listening on port ${PORT}`);
 });
