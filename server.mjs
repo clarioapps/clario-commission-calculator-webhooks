@@ -951,8 +951,6 @@ function buildBuyerReceivedEmailHtml({
         <li>${escapeHtml(c.next2)}</li>
       </ul>
     </div>
-
-    ${expireLine}
   `.trim();
 
   return emailShell({
@@ -1025,7 +1023,8 @@ function buildBuyerStatusEmailHtml({
     agentName || agentPhone || agentEmail
       ? `
       <div style="margin-top:10px;font-size:14px;line-height:1.6;">
-        <div><strong>Agent Contact:</strong> ${escapeHtml(agentName || "Agent")}</div>
+        <div><strong>Agent Contact:</strong></div>
+        <div>${escapeHtml(agentName || "Agent")}</div>
         ${agentPhone ? `<div>${escapeHtml(agentPhone)}</div>` : ""}
         ${agentEmail ? `<div><a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a></div>` : ""}
       </div>
@@ -1045,14 +1044,6 @@ function buildBuyerStatusEmailHtml({
   const rescheduleBlock =
     !isApproved && schedulerUrl
       ? `<div style="margin:14px 0 8px 0;">${primaryButton(schedulerUrl, c.rescheduleBtn)}</div>`
-      : "";
-
-  const expireDays = Number(linksExpireDays || 0) || 0;
-  const expireLine =
-    expireDays > 0
-      ? `<div style="font-size:12px;color:#666;margin-top:10px;">
-           ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(expireDays === 1 ? "day" : "days")}.
-         </div>`
       : "";
 
   const sections = `
@@ -1097,8 +1088,6 @@ function buildBuyerStatusEmailHtml({
       </div>`
         : ""
     }
-
-    ${expireLine}
   `.trim();
 
   return emailShell({
