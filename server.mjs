@@ -448,12 +448,7 @@ async function handleAppRemoved(event, appLabel, appKey) {
 
 /* ───────────────────── Showing Emails ───────────────────── */
 
-function normalizeLang(lang) {
-  const s = String(lang || "").toLowerCase().trim();
-  if (s.startsWith("es")) return "es";
-  if (s.startsWith("fr")) return "fr";
-  if (s.startsWith("de")) return "de";
-  if (s.startsWith("pt")) return "pt";
+function normalizeLang(_lang) {
   return "en";
 }
 
@@ -473,75 +468,43 @@ const EMAIL_COPY = {
 
     subjectReceived: "We received your showing request",
     headingReceived: "Request received",
+
+    // Normal (non-waitlist) copy
     receivedIntro:
       "We received your request to tour the home below. The listing agent will review availability and you’ll receive a confirmation email soon.",
     whatNext: "What happens next",
     next1: "The agent is reviewing availability now.",
     next2: "You’ll receive an email confirming your appointment or requesting a different time.",
-    buyerAgentNoteLabel: "Buyer’s Agent",
-    waitlistNote:
-      "This home may not be accepting showings yet. If so, we’ll notify you as soon as showings are available.",
 
+    // ✅ Waitlist (LOCKED)
+    waitlistIntro:
+      "We received your request and added you to the waitlist for the home below. As soon as this property opens for showings, everyone on the waitlist will be notified right away—so you’ll have the first opportunity to book a time.",
+    waitlistNext1: "The property isn’t accepting showings yet, so no appointment is scheduled at this time.",
+    waitlistNext2: "When showings become available, you’ll get an email to book your preferred day and time.",
+
+    buyerAgentNoteLabel: "Buyer’s Agent",
+
+    // Approved / Not Confirmed
     subjectApproved: "Showing Confirmed",
-    subjectDeclined: "Showing Request Declined",
+    subjectDeclined: "Showing Request Not Confirmed",
+
     headingApproved: "Your showing is confirmed",
-    headingDeclined: "Your request was declined",
-    reasonLabel: "Reason",
+    headingDeclined: "Showing Not Confirmed",
+
     approvedBody: "Your appointment has been confirmed. We look forward to seeing you.",
-    declinedBody: "Unfortunately, the requested time is not available.",
+
     rescheduleBtn: "Pick a different time",
-    contactLinePrefix: "Need help?",
     cancelRescheduleLine: "If you need to cancel or reschedule, contact the agent directly.",
+
+    // Labels
     confirmedTimeLabel: "Confirmed Time (Property Time)",
+    requestedTimeLabel: "Requested Time (Property Time)",
     agentSectionLabel: "Assigned Agent",
   },
-  es: {
-    subjectNew: "Nueva solicitud de visita",
-    headingNew: "Nueva solicitud de visita",
-    manage: "Administrar visita",
-    approve: "Aprobar",
-    decline: "Rechazar",
-    fallbackLinkNote: "Si el botón no funciona, usa este enlace:",
-    requestedTime: "Hora solicitada",
-    buyer: "Comprador",
-    property: "Propiedad",
-    statusLabel: "Estado",
-    linksExpireNotePrefix: "Los enlaces de gestión expiran en",
-
-    subjectReceived: "Recibimos tu solicitud de visita",
-    headingReceived: "Solicitud recibida",
-    receivedIntro:
-      "Recibimos tu solicitud para visitar la propiedad. El agente revisará la disponibilidad y pronto recibirás un correo de confirmación.",
-    whatNext: "¿Qué sigue?",
-    next1: "El agente está revisando la disponibilidad.",
-    next2: "Recibirás un correo confirmando tu cita o solicitando otra hora.",
-    buyerAgentNoteLabel: "Agente del comprador",
-    waitlistNote:
-      "Es posible que esta propiedad aún no esté aceptando visitas. Si es así, te avisaremos cuando haya visitas disponibles.",
-
-    subjectApproved: "Visita confirmada",
-    subjectDeclined: "Solicitud rechazada",
-    headingApproved: "Tu visita está confirmada",
-    headingDeclined: "Tu solicitud fue rechazada",
-    reasonLabel: "Motivo",
-    approvedBody: "Tu cita ha sido confirmada.",
-    declinedBody: "Lamentablemente, la hora solicitada no está disponible.",
-    rescheduleBtn: "Elegir otra hora",
-    contactLinePrefix: "¿Necesitas ayuda?",
-    cancelRescheduleLine: "Si necesitas cancelar o reprogramar, contacta al agente.",
-    confirmedTimeLabel: "Hora confirmada (hora de la propiedad)",
-    agentSectionLabel: "Agente asignado",
-  },
-  fr: {},
-  de: {},
-  pt: {},
 };
 
-function copyForLang(lang) {
-  const key = normalizeLang(lang);
-  const base = EMAIL_COPY.en;
-  const specific = EMAIL_COPY[key] || {};
-  return { ...base, ...specific };
+function copyForLang(_lang) {
+  return EMAIL_COPY.en;
 }
 
 function wixImageToPublicUrl(value) {
@@ -584,12 +547,7 @@ function subjectAddressShort(property) {
   return street || city || "Property";
 }
 
-function localeForLang(lang) {
-  const s = String(lang || "").toLowerCase();
-  if (s.startsWith("es")) return "es-ES";
-  if (s.startsWith("fr")) return "fr-FR";
-  if (s.startsWith("de")) return "de-DE";
-  if (s.startsWith("pt")) return "pt-PT";
+function localeForLang(_lang) {
   return "en-US";
 }
 
@@ -855,6 +813,56 @@ function buildNewShowingEmailHtml({
   });
 }
 
+function capFirst(s) {
+  const v = String(s || "").trim();
+  if (!v) return "";
+  return v.charAt(0).toUpperCase() + v.slice(1).toLowerCase();
+}
+
+function normalizeReasonLabel(reasonLabel) {
+  const raw = String(reasonLabel || "").trim();
+  const s = raw.toLowerCase();
+
+  if (s.includes("seller") || s.includes("occupant")) return "Seller/Occupant Unavailable";
+  if (s.includes("no longer available") || s.includes("that time")) return "That time is no longer available";
+  if (s.includes("offer") || s.includes("under contract") || s.includes("undercontract")) return "Offer accepted / Under contract";
+  if (s.includes("temporar")) return "Temporarily unavailable";
+  if (s.includes("not available for showing") || s.includes("not available for showings") || (s.includes("not available") && s.includes("show"))) return "Not available for showings";
+
+  return raw;
+}
+
+function isRescheduleAllowedByReason(reasonLabel) {
+  const normalized = normalizeReasonLabel(reasonLabel);
+  return (
+    normalized === "Seller/Occupant Unavailable" ||
+    normalized === "That time is no longer available"
+  );
+}
+
+function notConfirmedIntroByReason(reasonLabel, greetingName) {
+  const normalized = normalizeReasonLabel(reasonLabel);
+
+  if (normalized === "Seller/Occupant Unavailable") {
+    return `Hi ${greetingName},\nThanks for your request. The seller/occupant isn’t available at the requested time, so we couldn’t confirm your showing.`;
+  }
+  if (normalized === "That time is no longer available") {
+    return `Hi ${greetingName},\nThanks for your request. That time is no longer available, so we couldn’t confirm your showing.`;
+  }
+  if (normalized === "Offer accepted / Under contract") {
+    return `Hi ${greetingName},\nThanks for your request. This property is currently under contract, so we couldn’t confirm a showing.`;
+  }
+  if (normalized === "Not available for showings") {
+    return `Hi ${greetingName},\nThanks for your request. This property isn’t available for showings right now, so we couldn’t confirm your appointment.`;
+  }
+  if (normalized === "Temporarily unavailable") {
+    return `Hi ${greetingName},\nThanks for your request. This property is temporarily unavailable for showings, so we couldn’t confirm your appointment.`;
+  }
+
+  // Fallback if some unknown reason comes through
+  return `Hi ${greetingName},\nThanks for your request. We couldn’t confirm your showing.`;
+}
+
 function buildBuyerReceivedEmailHtml({
   lang,
   brokerageName,
@@ -890,23 +898,23 @@ function buildBuyerReceivedEmailHtml({
 
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
 
-  const statusLabel = String(showing?.statusLabel || "").trim();
-  const lowerStatus = String(statusLabel || "").toLowerCase();
-  const waitlistNote =
-    lowerStatus.includes("wait") || lowerStatus.includes("coming") ? c.waitlistNote : "";
+  const statusLabelRaw = String(showing?.statusLabel || "").trim();
+  const lowerStatus = String(statusLabelRaw || "").toLowerCase();
+  const isWaitlist = lowerStatus.includes("wait") || lowerStatus.includes("coming");
 
   const buyerHasAgentText = String(buyer?.buyerHasAgentText || "").trim();
 
+  const agentNameText = String(agentName || "").trim() || String(agent?.name || "").trim();
   const agentPhone = String(agent?.phone || "").trim();
   const agentEmail = String(agent?.email || "").trim();
 
   const agentContactBlock =
-    (agentName || agentPhone || agentEmail)
+    (agentNameText || agentPhone || agentEmail)
       ? `
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
       <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.agentSectionLabel)}</div>
       <div style="font-size:14px;line-height:1.6;">
-        <div>${escapeHtml(agentName || "Agent")}</div>
+        <div>${escapeHtml(agentNameText || "Agent")}</div>
         ${agentPhone ? `<div>${escapeHtml(agentPhone)}</div>` : ""}
         ${agentEmail ? `<div><a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a></div>` : ""}
       </div>
@@ -922,13 +930,16 @@ function buildBuyerReceivedEmailHtml({
          </div>`
       : "";
 
+  const introText = isWaitlist ? c.waitlistIntro : c.receivedIntro;
+  const next1 = isWaitlist ? c.waitlistNext1 : c.next1;
+  const next2 = isWaitlist ? c.waitlistNext2 : c.next2;
+
   const sections = `
-    ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
+    ${statusLabelRaw ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabelRaw}`)}</div>` : ""}
 
     <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
       <div>Hi ${escapeHtml(greetingName)},</div>
-      <div>${escapeHtml(c.receivedIntro)}</div>
-      ${waitlistNote ? `<div style="margin-top:10px;">${escapeHtml(waitlistNote)}</div>` : ""}
+      <div>${escapeHtml(introText)}</div>
       ${buyerHasAgentText ? `<div style="margin-top:10px;"><strong>${escapeHtml(c.buyerAgentNoteLabel)}:</strong> ${escapeHtml(buyerHasAgentText)}</div>` : ""}
     </div>
 
@@ -947,10 +958,12 @@ function buildBuyerReceivedEmailHtml({
     <div style="margin-top:10px;">
       <div style="font-size:14px;font-weight:700;margin-bottom:6px;">${escapeHtml(c.whatNext)}</div>
       <ul style="margin:0;padding-left:18px;color:#111;font-size:14px;line-height:1.6;">
-        <li>${escapeHtml(c.next1)}</li>
-        <li>${escapeHtml(c.next2)}</li>
+        <li>${escapeHtml(next1)}</li>
+        <li>${escapeHtml(next2)}</li>
       </ul>
     </div>
+
+    ${expireLine}
   `.trim();
 
   return emailShell({
@@ -961,12 +974,6 @@ function buildBuyerReceivedEmailHtml({
     footerHtml: "",
     showingId: showing?.id || "",
   });
-}
-
-function capFirst(s) {
-  const v = String(s || "").trim();
-  if (!v) return "";
-  return v.charAt(0).toUpperCase() + v.slice(1).toLowerCase();
 }
 
 function buildBuyerStatusEmailHtml({
@@ -1010,84 +1017,111 @@ function buildBuyerStatusEmailHtml({
   const statusNorm = capFirst(status);
   const isApproved = statusNorm === "Approved";
 
+  // Approved stays as-is (existing behavior), Not Confirmed uses locked layout/copy.
   const heading = isApproved ? c.headingApproved : c.headingDeclined;
-  const intro = isApproved ? c.approvedBody : c.declinedBody;
 
-  const statusLabel = String(showing?.statusLabel || "").trim();
-  const schedulerUrl = String((links && links.schedulerUrl) || "").trim();
+  const schedulerUrlRaw = String((links && links.schedulerUrl) || "").trim();
+  const schedulerUrl = schedulerUrlRaw; // keep as-is (do not alter URL logic)
 
   const agentPhone = String(agent?.phone || "").trim();
   const agentEmail = String(agent?.email || "").trim();
+  const agentNameText = String(agentName || "").trim() || String(agent?.name || "").trim();
 
-  const agentContactLine =
-    agentName || agentPhone || agentEmail
+  const hasAgentContact = !!(agentNameText || agentPhone || agentEmail);
+
+  const agentContactBlock =
+    hasAgentContact
       ? `
-      <div style="margin-top:10px;font-size:14px;line-height:1.6;">
-        <div><strong>Agent Contact:</strong></div>
-        <div>${escapeHtml(agentName || "Agent")}</div>
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.agentSectionLabel)}</div>
+      <div style="font-size:14px;line-height:1.6;">
+        <div>${escapeHtml(agentNameText || "Agent")}</div>
         ${agentPhone ? `<div>${escapeHtml(agentPhone)}</div>` : ""}
         ${agentEmail ? `<div><a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a></div>` : ""}
       </div>
-    `.trim()
+    </div>
+  `.trim()
       : "";
 
-  const reasonBlock =
-    !isApproved && String(declineReasonLabel || "").trim()
-      ? `
-      <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-        <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.reasonLabel)}</div>
-        <div style="font-size:14px;line-height:1.4;">${escapeHtml(declineReasonLabel)}</div>
-      </div>
-    `.trim()
+  const expireDays = Number(linksExpireDays || 0) || 0;
+  const expireLine =
+    expireDays > 0
+      ? `<div style="font-size:12px;color:#666;margin-top:10px;">
+           ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(expireDays === 1 ? "day" : "days")}.
+         </div>`
       : "";
+
+  // Status pill rule:
+  // - Approved: keep showing.statusLabel if present
+  // - Not Confirmed: show REASON (not "Declined")
+  const statusLabelRaw = String(showing?.statusLabel || "").trim();
+  const reasonNormalized = normalizeReasonLabel(declineReasonLabel);
+  const pillText = isApproved
+    ? statusLabelRaw
+    : (reasonNormalized || "");
+
+  // Reschedule rule:
+  // only for Seller/Occupant Unavailable and That time is no longer available
+  const rescheduleAllowed =
+    !isApproved && isRescheduleAllowedByReason(reasonNormalized);
+
+  const introText = isApproved
+    ? `Hi ${greetingName},\n${c.approvedBody}`
+    : notConfirmedIntroByReason(reasonNormalized, greetingName);
 
   const rescheduleBlock =
-    !isApproved && schedulerUrl
-      ? `<div style="margin:14px 0 8px 0;">${primaryButton(schedulerUrl, c.rescheduleBtn)}</div>`
+    (!isApproved && rescheduleAllowed && schedulerUrl)
+      ? `<div style="margin:12px 0 14px 0;">${primaryButton(schedulerUrl, c.rescheduleBtn)}</div>`
       : "";
 
-  const sections = `
-    ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
-
-    <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
-      <div>Hi ${escapeHtml(greetingName)},</div>
-      <div>${escapeHtml(intro)}</div>
+  // Info boxes rule:
+  // - Property box always
+  // - Time box only when reschedule is allowed (Not Confirmed)
+  // - Approved keeps confirmed time box
+  const timeBoxHtml = isApproved
+    ? `
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.confirmedTimeLabel)}</div>
+      <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
     </div>
+  `.trim()
+    : (rescheduleAllowed
+        ? `
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requestedTimeLabel)}</div>
+      <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
+    </div>
+  `.trim()
+        : "");
+
+  const sections = `
+    ${pillText ? `<div style="margin:0 0 14px 0;">${infoPill(pillText)}</div>` : ""}
+
+    <div style="font-size:14px;line-height:1.6;margin-bottom:12px;white-space:pre-line;">
+      ${escapeHtml(introText)}
+    </div>
+
+    ${rescheduleBlock}
 
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
       <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.property)}</div>
       <div style="font-size:14px;line-height:1.4;">${addressHtml || "—"}</div>
     </div>
 
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.confirmedTimeLabel)}</div>
-      <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
-    </div>
+    ${timeBoxHtml}
 
-    ${reasonBlock}
-
-    ${agentContactLine ? agentContactLine : ""}
+    ${agentContactBlock ? agentContactBlock : ""}
 
     ${
       isApproved
         ? `
-      <div style="margin-top:12px;font-size:13px;color:#111;">
+      <div style="margin-top:4px;font-size:13px;color:#111;">
         ${escapeHtml(c.cancelRescheduleLine)}
       </div>`
         : ""
     }
 
-    ${rescheduleBlock}
-
-    ${
-      !isApproved && (agentPhone || agentEmail)
-        ? `
-      <div style="margin-top:10px;font-size:13px;color:#111;">
-        ${escapeHtml(c.contactLinePrefix)} ${escapeHtml(agentName || "the agent")}
-        ${agentPhone ? ` at ${escapeHtml(agentPhone)}` : ""}${agentEmail ? ` or <a href="mailto:${escapeHtml(agentEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(agentEmail)}</a>` : ""}.
-      </div>`
-        : ""
-    }
+    ${expireLine}
   `.trim();
 
   return emailShell({
@@ -1525,3 +1559,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Webhook server listening on port ${PORT}`);
 });
+
