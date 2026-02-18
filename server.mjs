@@ -750,9 +750,7 @@ function buildNewShowingEmailHtml({
   const statusLabel = String(showing?.statusLabel || "").trim();
 
   // ✅ Manage only. Also ensure ABSOLUTE URL.
-  const rawManage =
-    String((links && (links.manageUrl || links.managePath)) || "").trim();
-
+  const rawManage = String((links && (links.manageUrl || links.managePath)) || "").trim();
   const manageUrl = absolutizeUrlMaybe(rawManage, siteBaseUrl || "");
 
   const expireDays = Number(linksExpireDays || 0) || 0;
@@ -937,17 +935,22 @@ function buildBuyerReceivedEmailHtml({
   `.trim()
       : "";
 
-  const expireDays = Number(linksExpireDays || 0) || 0;
-  const expireLine =
-    expireDays > 0
-      ? `<div style="font-size:12px;color:#666;margin-top:10px;">
-           ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(expireDays === 1 ? "day" : "days")}.
-         </div>`
-      : "";
+  // ✅ CHANGE: buyer emails should NOT show manage-link expiry note.
+  const expireLine = "";
 
   const introText = isWaitlist ? c.waitlistIntro : c.receivedIntro;
   const next1 = isWaitlist ? c.waitlistNext1 : c.next1;
   const next2 = isWaitlist ? c.waitlistNext2 : c.next2;
+
+  // ✅ CHANGE: waitlist emails should NOT show a requested time block (no appointment scheduled).
+  const requestedTimeBoxHtml = isWaitlist
+    ? ""
+    : `
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requestedTime)} (Property Time)</div>
+      <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
+    </div>
+  `.trim();
 
   const sections = `
     ${statusLabelRaw ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabelRaw}`)}</div>` : ""}
@@ -963,10 +966,7 @@ function buildBuyerReceivedEmailHtml({
       <div style="font-size:14px;line-height:1.4;">${addressHtml || "—"}</div>
     </div>
 
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requestedTime)} (Property Time)</div>
-      <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
-    </div>
+    ${requestedTimeBoxHtml}
 
     ${agentContactBlock ? agentContactBlock : ""}
 
@@ -1058,27 +1058,19 @@ function buildBuyerStatusEmailHtml({
   `.trim()
       : "";
 
-  const expireDays = Number(linksExpireDays || 0) || 0;
-  const expireLine =
-    expireDays > 0
-      ? `<div style="font-size:12px;color:#666;margin-top:10px;">
-           ${escapeHtml(c.linksExpireNotePrefix)} ${escapeHtml(String(expireDays))} ${escapeHtml(expireDays === 1 ? "day" : "days")}.
-         </div>`
-      : "";
+  // ✅ CHANGE: buyer emails should NOT show manage-link expiry note.
+  const expireLine = "";
 
   // Status pill rule:
   // - Approved: keep showing.statusLabel if present
   // - Not Confirmed: show REASON (not "Declined")
   const statusLabelRaw = String(showing?.statusLabel || "").trim();
   const reasonNormalized = normalizeReasonLabel(declineReasonLabel);
-  const pillText = isApproved
-    ? statusLabelRaw
-    : (reasonNormalized || "");
+  const pillText = isApproved ? statusLabelRaw : (reasonNormalized || "");
 
   // Reschedule rule:
   // only for Seller/Occupant Unavailable and That time is no longer available
-  const rescheduleAllowed =
-    !isApproved && isRescheduleAllowedByReason(reasonNormalized);
+  const rescheduleAllowed = !isApproved && isRescheduleAllowedByReason(reasonNormalized);
 
   const introText = isApproved
     ? `Hi ${greetingName},\n${c.approvedBody}`
@@ -1245,9 +1237,7 @@ app.post("/showings/new-request", async (req, res) => {
     const replyTo = String((body.agent && body.agent.email) || body.agentEmail || body.agent_email || "").trim();
     const fromName = brokerageName || agentName || "Showing Scheduler";
 
-    const rawManage =
-      String((links && (links.manageUrl || links.managePath)) || "").trim();
-
+    const rawManage = String((links && (links.manageUrl || links.managePath)) || "").trim();
     const finalManage = absolutizeUrlMaybe(rawManage, siteBaseUrl || "");
 
     console.log("[ShowingsRoute] /showings/new-request computed", {
