@@ -638,6 +638,15 @@ function primaryButton(url, label) {
     </a>`;
 }
 
+function secondaryButton(url, label) {
+  if (!url) return "";
+  return `
+    <a href="${escapeHtml(url)}"
+       style="display:inline-block;text-decoration:none;padding:12px 16px;border-radius:10px;background:#ffffff;border:1px solid #d1d5db;color:#111827;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:700;">
+      ${escapeHtml(label)}
+    </a>`;
+}
+
 function infoPill(text) {
   const t = String(text || "").trim();
   if (!t) return "";
@@ -713,6 +722,85 @@ function absolutizeUrlMaybe(url, baseSiteUrl) {
   return base + "/" + u;
 }
 
+/* ───────────────────── Google Maps + Google Calendar Helpers ───────────────────── */
+
+function googleMapsSearchUrl(addressText) {
+  const q = String(addressText || "").trim();
+  if (!q) return "";
+  return "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(q);
+}
+
+function googleCalendarUtcStamp(dateObj) {
+  try {
+    const iso = dateObj.toISOString(); // e.g. 2026-02-18T15:30:00.000Z
+    return iso.replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z"); // 20260218T153000Z
+  } catch (_e) {
+    return "";
+  }
+}
+
+function getShowingStartDate(showing) {
+  return parseDateSafe(
+    showing?.requestedStart ||
+      showing?.requestedStartUtc ||
+      showing?.requestedDateTime ||
+      showing?.requestedDateTimeUtc ||
+      showing?.slotStart ||
+      showing?.start ||
+      showing?.startTime ||
+      showing?.dateTime ||
+      showing?.requested_start ||
+      showing?.requested_start_utc
+  );
+}
+
+function getShowingDurationMinutes(showing) {
+  const candidates = [
+    showing?.durationMinutes,
+    showing?.slotDurationMinutes,
+    showing?.duration,
+    showing?.durationMin,
+    showing?.minutes,
+    showing?.slotMinutes,
+  ];
+
+  for (const v of candidates) {
+    const n = Number(v);
+    if (isFinite(n) && n > 0) return n;
+  }
+  return 30; // safe default
+}
+
+function googleCalendarCreateEventUrl({ title, details, location, startDate, endDate }) {
+  try {
+    const text = String(title || "").trim();
+    const det = String(details || "").trim();
+    const loc = String(location || "").trim();
+
+    if (!startDate || !(startDate instanceof Date) || isNaN(startDate.getTime())) return "";
+
+    const end =
+      (endDate && endDate instanceof Date && !isNaN(endDate.getTime()))
+        ? endDate
+        : new Date(startDate.getTime() + 30 * 60 * 1000);
+
+    const dates = `${googleCalendarUtcStamp(startDate)}/${googleCalendarUtcStamp(end)}`;
+    if (!dates || dates.includes("undefined")) return "";
+
+    const base = "https://calendar.google.com/calendar/render?action=TEMPLATE";
+    const q = [
+      `text=${encodeURIComponent(text)}`,
+      `details=${encodeURIComponent(det)}`,
+      `location=${encodeURIComponent(loc)}`,
+      `dates=${encodeURIComponent(dates)}`,
+    ].join("&");
+
+    return base + "&" + q;
+  } catch (_e) {
+    return "";
+  }
+}
+
 /* ───────────── HTML Builders ───────────── */
 
 function buildNewShowingEmailHtml({
@@ -730,7 +818,13 @@ function buildNewShowingEmailHtml({
   const c = copyForLang(lang);
 
   const brandLine = brokerageName || agentName || "Showing Scheduler";
-  const addressHtml = formatAddress(property);
+
+  const addressText = formatAddress(property);
+  const mapsUrl = googleMapsSearchUrl(addressText);
+
+  const addressHtml = mapsUrl
+    ? `<a href="${escapeHtml(mapsUrl)}" target="_blank" rel="noopener noreferrer" style="color:#0b5cff;text-decoration:none;">${escapeHtml(addressText || "—")}</a>`
+    : (addressText || "—");
 
   const imgUrl = wixImageToPublicUrl(property?.image);
   const imgBlock = imgUrl
@@ -780,6 +874,29 @@ function buildNewShowingEmailHtml({
     </div>
   `.trim();
 
+  // ✅ NEW: Google Calendar button (Agent new request) — only if not waitlist and has a start date
+  const startDate = getShowingStartDate(showing);
+  const durMin = getShowingDurationMinutes(showing);
+  const endDate = startDate ? new Date(startDate.getTime() + durMin * 60 * 1000) : null;
+
+  const calUrl = (!isWaitlist && startDate)
+    ? googleCalendarCreateEventUrl({
+        title: `Home Showing: ${subjectAddressShort(property)}`,
+        details: `Showing request${buyerName ? ` for ${buyerName}` : ""}.`,
+        location: addressText,
+        startDate,
+        endDate,
+      })
+    : "";
+
+  const calendarBlockHtml = calUrl
+    ? `
+    <div style="margin:4px 0 14px 0;">
+      ${secondaryButton(calUrl, "Add to Google Calendar")}
+    </div>
+  `.trim()
+    : "";
+
   const manageBlockHtml = isWaitlist
     ? ""
     : `
@@ -809,6 +926,8 @@ function buildNewShowingEmailHtml({
     </div>
 
     ${requestedTimeBoxHtml}
+
+    ${calendarBlockHtml}
 
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
       <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.buyer)}</div>
@@ -1030,7 +1149,13 @@ function buildBuyerStatusEmailHtml({
   const c = copyForLang(lang);
 
   const brandLine = brokerageName || agentName || "Showing Scheduler";
-  const addressHtml = formatAddress(property);
+
+  const addressText = formatAddress(property);
+  const mapsUrl = googleMapsSearchUrl(addressText);
+
+  const addressHtml = mapsUrl
+    ? `<a href="${escapeHtml(mapsUrl)}" target="_blank" rel="noopener noreferrer" style="color:#0b5cff;text-decoration:none;">${escapeHtml(addressText || "—")}</a>`
+    : (addressText || "—");
 
   const imgUrl = wixImageToPublicUrl(property?.image);
   const imgBlock = imgUrl
@@ -1123,6 +1248,29 @@ function buildBuyerStatusEmailHtml({
   `.trim()
         : "");
 
+  // ✅ NEW: Google Calendar button (Buyer Approved only)
+  const startDate = getShowingStartDate(showing);
+  const durMin = getShowingDurationMinutes(showing);
+  const endDate = startDate ? new Date(startDate.getTime() + durMin * 60 * 1000) : null;
+
+  const calUrl = (isApproved && startDate)
+    ? googleCalendarCreateEventUrl({
+        title: `Home Showing: ${subjectAddressShort(property)}`,
+        details: `Showing confirmed for ${greetingName}.`,
+        location: addressText,
+        startDate,
+        endDate,
+      })
+    : "";
+
+  const calendarBlockHtml = calUrl
+    ? `
+    <div style="margin:6px 0 14px 0;">
+      ${secondaryButton(calUrl, "Add to Google Calendar")}
+    </div>
+  `.trim()
+    : "";
+
   const sections = `
     ${pillText ? `<div style="margin:0 0 14px 0;">${infoPill(pillText)}</div>` : ""}
 
@@ -1138,6 +1286,8 @@ function buildBuyerStatusEmailHtml({
     </div>
 
     ${timeBoxHtml}
+
+    ${calendarBlockHtml}
 
     ${agentContactBlock ? agentContactBlock : ""}
 
@@ -1594,4 +1744,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Webhook server listening on port ${PORT}`);
 });
-
