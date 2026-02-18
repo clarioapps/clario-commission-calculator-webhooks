@@ -456,6 +456,11 @@ const EMAIL_COPY = {
   en: {
     subjectNew: "New Showing Request",
     headingNew: "New Showing Request",
+
+    // ✅ NEW (admin waitlist)
+    subjectWaitlistNew: "New Waitlist Request",
+    headingWaitlistNew: "New Waitlist Request",
+
     manage: "Manage Showing",
     approve: "Approve",
     decline: "Decline",
@@ -749,6 +754,10 @@ function buildNewShowingEmailHtml({
   const requestedText = safeDisplayTimeOnlyProperty({ showing, timeZone: tz, lang });
   const statusLabel = String(showing?.statusLabel || "").trim();
 
+  // ✅ NEW: detect waitlist for admin email
+  const lowerStatus = String(statusLabel || "").toLowerCase();
+  const isWaitlist = lowerStatus.includes("wait") || lowerStatus.includes("coming");
+
   // ✅ Manage only. Also ensure ABSOLUTE URL.
   const rawManage = String((links && (links.manageUrl || links.managePath)) || "").trim();
   const manageUrl = absolutizeUrlMaybe(rawManage, siteBaseUrl || "");
@@ -761,29 +770,19 @@ function buildNewShowingEmailHtml({
          </div>`
       : "";
 
-  const sections = `
-    ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
-
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.property)}</div>
-      <div style="font-size:14px;line-height:1.4;">${addressHtml || "—"}</div>
-    </div>
-
+  // ✅ CHANGE: waitlist admin email should NOT show requested time, manage button/link, or expire note
+  const requestedTimeBoxHtml = isWaitlist
+    ? ""
+    : `
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
       <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.requestedTime)}</div>
       <div style="font-size:14px;line-height:1.4;">${escapeHtml(requestedText || "—")}</div>
     </div>
+  `.trim();
 
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.buyer)}</div>
-      <div style="font-size:14px;line-height:1.6;">
-        <div>${escapeHtml(buyerName || "—")}</div>
-        ${buyerEmail ? `<div><a href="mailto:${escapeHtml(buyerEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(buyerEmail)}</a></div>` : ""}
-        ${buyerPhone ? `<div>${escapeHtml(buyerPhone)}</div>` : ""}
-        ${buyerHasAgentText ? `<div style="margin-top:8px;font-size:13px;color:#111;"><strong>${escapeHtml(c.buyerAgentNoteLabel)}:</strong> ${escapeHtml(buyerHasAgentText)}</div>` : ""}
-      </div>
-    </div>
-
+  const manageBlockHtml = isWaitlist
+    ? ""
+    : `
     <div style="margin:18px 0 8px 0;">
       ${primaryButton(manageUrl, c.manage)}
     </div>
@@ -801,9 +800,32 @@ function buildNewShowingEmailHtml({
     ${expireLine}
   `.trim();
 
+  const sections = `
+    ${statusLabel ? `<div style="margin:0 0 14px 0;">${infoPill(`${c.statusLabel}: ${statusLabel}`)}</div>` : ""}
+
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.property)}</div>
+      <div style="font-size:14px;line-height:1.4;">${addressHtml || "—"}</div>
+    </div>
+
+    ${requestedTimeBoxHtml}
+
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">${escapeHtml(c.buyer)}</div>
+      <div style="font-size:14px;line-height:1.6;">
+        <div>${escapeHtml(buyerName || "—")}</div>
+        ${buyerEmail ? `<div><a href="mailto:${escapeHtml(buyerEmail)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(buyerEmail)}</a></div>` : ""}
+        ${buyerPhone ? `<div>${escapeHtml(buyerPhone)}</div>` : ""}
+        ${buyerHasAgentText ? `<div style="margin-top:8px;font-size:13px;color:#111;"><strong>${escapeHtml(c.buyerAgentNoteLabel)}:</strong> ${escapeHtml(buyerHasAgentText)}</div>` : ""}
+      </div>
+    </div>
+
+    ${manageBlockHtml}
+  `.trim();
+
   return emailShell({
     brandLine,
-    heading: c.headingNew,
+    heading: isWaitlist ? c.headingWaitlistNew : c.headingNew,
     imgBlock,
     sectionsHtml: sections,
     footerHtml: "",
@@ -1218,7 +1240,13 @@ app.post("/showings/new-request", async (req, res) => {
     if (to.length === 0 && ADMIN_EMAIL) to = [ADMIN_EMAIL];
 
     const c = copyForLang(lang);
-    const subjectBase = c.subjectNew;
+
+    // ✅ CHANGE: if waitlist, subject should be "New Waitlist Request"
+    const statusLabelRaw = String(showing?.statusLabel || "").trim();
+    const lowerStatus = String(statusLabelRaw || "").toLowerCase();
+    const isWaitlist = lowerStatus.includes("wait") || lowerStatus.includes("coming");
+
+    const subjectBase = isWaitlist ? c.subjectWaitlistNew : c.subjectNew;
     const subject = `${subjectBase} — ${subjectAddressShort(property)}`;
 
     const html = buildNewShowingEmailHtml({
@@ -1247,6 +1275,8 @@ app.post("/showings/new-request", async (req, res) => {
       siteBaseUrl: siteBaseUrl || "",
       rawManageUrl: rawManage,
       manageUrlFinal: finalManage,
+      isWaitlist,
+      statusLabel: statusLabelRaw,
     });
 
     await sendEmail({ to, subject, html, fromName, replyTo });
@@ -1564,3 +1594,4 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Webhook server listening on port ${PORT}`);
 });
+
