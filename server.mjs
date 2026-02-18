@@ -825,6 +825,17 @@ function normalizeReasonLabel(reasonLabel) {
 
   if (s.includes("seller") || s.includes("occupant")) return "Seller/Occupant Unavailable";
   if (s.includes("no longer available") || s.includes("that time")) return "That time is no longer available";
+
+  // ✅ NEW: normalize “please choose a different time” / “requested time not available” style reasons
+  if (
+    s.includes("choose a different time") ||
+    s.includes("pick a different time") ||
+    s.includes("requested time is not available") ||
+    (s.includes("requested") && s.includes("time") && s.includes("not") && s.includes("available"))
+  ) {
+    return "Your requested time is not available";
+  }
+
   if (s.includes("offer") || s.includes("under contract") || s.includes("undercontract")) return "Offer accepted / Under contract";
   if (s.includes("temporar")) return "Temporarily unavailable";
   if (s.includes("not available for showing") || s.includes("not available for showings") || (s.includes("not available") && s.includes("show"))) return "Not available for showings";
@@ -836,7 +847,8 @@ function isRescheduleAllowedByReason(reasonLabel) {
   const normalized = normalizeReasonLabel(reasonLabel);
   return (
     normalized === "Seller/Occupant Unavailable" ||
-    normalized === "That time is no longer available"
+    normalized === "That time is no longer available" ||
+    normalized === "Your requested time is not available"
   );
 }
 
@@ -844,19 +856,22 @@ function notConfirmedIntroByReason(reasonLabel, greetingName) {
   const normalized = normalizeReasonLabel(reasonLabel);
 
   if (normalized === "Seller/Occupant Unavailable") {
-    return `Hi ${greetingName},\nThanks for your request. The seller/occupant isn’t available at the requested time, so we couldn’t confirm your showing.`;
+    return `Hi ${greetingName},\nThanks for your request. The seller/occupant isn’t available at the requested time, so we couldn’t confirm your showing. Please click the button below to request a different time. We apologize for any inconvenience.`;
   }
   if (normalized === "That time is no longer available") {
-    return `Hi ${greetingName},\nThanks for your request. That time is no longer available, so we couldn’t confirm your showing.`;
+    return `Hi ${greetingName},\nThanks for your request. The requested time is no longer available, so we couldn’t confirm your showing. Please click the button below to request a different time. We apologize for any inconvenience.`;
+  }
+  if (normalized === "Your requested time is not available") {
+    return `Hi ${greetingName},\nThanks for your request. Your requested time is not available, so we couldn’t confirm your showing. Please click the button below to request a different time. We apologize for any inconvenience.`;
   }
   if (normalized === "Offer accepted / Under contract") {
-    return `Hi ${greetingName},\nThanks for your request. This property is currently under contract, so we couldn’t confirm a showing.`;
+    return `Hi ${greetingName},\nThanks for your request. This property has recently gone under contract, so we couldn’t confirm a showing. We apologize for any inconvenience.`;
   }
   if (normalized === "Not available for showings") {
-    return `Hi ${greetingName},\nThanks for your request. This property isn’t available for showings right now, so we couldn’t confirm your appointment.`;
+    return `Hi ${greetingName},\nThanks for your request. This property isn’t available for showings right now, so we couldn’t confirm your appointment. When the property becomes available again, we will contact you. If you have questions, you may also reach out to the assigned agent below.`;
   }
   if (normalized === "Temporarily unavailable") {
-    return `Hi ${greetingName},\nThanks for your request. This property is temporarily unavailable for showings, so we couldn’t confirm your appointment.`;
+    return `Hi ${greetingName},\nThanks for your request. This property is temporarily unavailable for showings, so we couldn’t confirm your appointment. When the property becomes available again, we will contact you. If you have questions, you may also reach out to the assigned agent below.`;
   }
 
   // Fallback if some unknown reason comes through
@@ -1559,4 +1574,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Webhook server listening on port ${PORT}`);
 });
-
