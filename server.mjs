@@ -974,7 +974,20 @@ function normalizeReasonLabel(reasonLabel) {
   ) {
     return "Your requested time is not available";
   }
-
+  // ✅ NEW: Buyer represented / under agreement
+  if (
+    s.includes("buyer represented") ||
+    s.includes("buyer-represented") ||
+    s.includes("represented") ||
+    s.includes("under agreement") ||
+    s.includes("buyer agreement") ||
+    s.includes("representation agreement") ||
+    s.includes("broker agreement") ||
+    (s.includes("buyer") && s.includes("agreement"))
+  ) {
+    return "Buyer represented / under agreement";
+  }
+   
   if (s.includes("offer") || s.includes("under contract") || s.includes("undercontract")) return "Offer accepted / Under contract";
   if (s.includes("temporar")) return "Temporarily unavailable";
   if (s.includes("not available for showing") || s.includes("not available for showings") || (s.includes("not available") && s.includes("show"))) return "Not available for showings";
@@ -984,10 +997,11 @@ function normalizeReasonLabel(reasonLabel) {
 
 function isRescheduleAllowedByReason(reasonLabel) {
   const normalized = normalizeReasonLabel(reasonLabel);
-  return (
+    return (
     normalized === "Seller/Occupant Unavailable" ||
     normalized === "That time is no longer available" ||
-    normalized === "Your requested time is not available"
+    normalized === "Your requested time is not available" ||
+    normalized === "Buyer represented / under agreement" // ✅ NEW
   );
 }
 
@@ -1012,7 +1026,10 @@ function notConfirmedIntroByReason(reasonLabel, greetingName) {
   if (normalized === "Temporarily unavailable") {
     return `Hi ${greetingName},\nThanks for your request. This property is temporarily unavailable for showings, so we couldn’t confirm your appointment. When the property becomes available again, we will contact you. If you have questions, you may also reach out to the assigned agent below.`;
   }
-
+    // ✅ NEW: Buyer represented / under agreement (reschedule allowed)
+  if (normalized === "Buyer represented / under agreement") {
+    return `Hi ${greetingName},\nYou indicated you’re currently under a buyer representation agreement with another agent, so we can’t confirm this showing request. Please have your agent request the showing.\n\nIf you selected that by mistake, you can reschedule below and update your answer.`;
+  }
   // Fallback if some unknown reason comes through
   return `Hi ${greetingName},\nThanks for your request. We couldn’t confirm your showing.`;
 }
@@ -1223,9 +1240,14 @@ function buildBuyerStatusEmailHtml({
     ? `Hi ${greetingName},\n${c.approvedBody}`
     : notConfirmedIntroByReason(reasonNormalized, greetingName);
 
+    const rescheduleBtnLabel =
+    (!isApproved && reasonNormalized === "Buyer represented / under agreement")
+      ? "Reschedule"
+      : c.rescheduleBtn;
+
   const rescheduleBlock =
     (!isApproved && rescheduleAllowed && schedulerUrl)
-      ? `<div style="margin:12px 0 14px 0;">${primaryButton(schedulerUrl, c.rescheduleBtn)}</div>`
+      ? `<div style="margin:12px 0 14px 0;">${primaryButton(schedulerUrl, rescheduleBtnLabel)}</div>`
       : "";
 
   // Info boxes rule:
