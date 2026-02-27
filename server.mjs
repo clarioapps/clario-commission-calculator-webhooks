@@ -17,12 +17,13 @@ const rawText = express.text({ type: "*/*" });
 // ✅ FIX: ensure webhooks receive RAW TEXT even if Wix sends application/json
 app.use((req, res, next) => {
   if (
-    req.path === "/webhook" ||
-    req.path === "/webhook-kpi" ||
-    req.path === "/webhook-mortgage"
-  ) {
-    return rawText(req, res, next);
-  }
+  req.path === "/webhook" ||
+  req.path === "/webhook-kpi" ||
+  req.path === "/webhook-mortgage" ||
+  req.path === "/webhook-showing-scheduler"
+) {
+  return rawText(req, res, next);
+}
   return jsonParser(req, res, next);
 });
 
@@ -83,6 +84,18 @@ XZ0NxerAygYREHDxA4PZQnTy9ZuEbvD5kZX115WOVFZo7QMW7YfARuHlzx4abhZw
 NQIDAQAB
 -----END PUBLIC KEY-----`;
 
+// Showing Scheduler
+const SHOWINGS_APP_ID = "e537a7a6-e228-483c-b33f-8174ccadf567";
+const SHOWINGS_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyJ/GANiZXLLsDokCUvsD
+Qdq3qnUZfQNq1cSUoQI8yiUjZF9FNQeH9zT6wQh7DEbH91v+iRXjW+6wvge+Y8PU
+FWOiBwed9/H+6zdJANxmzSfkMRic3sUcrCOErgf22VvxM2a9e0bpKY/KxVazmDxP
+Wf+jYhhCeXkSgFcfkMTWipo8zd3qOj2vwsPMIXFSIT82xYRHfokF0MA9QvYHR0Nx
+5IfK0q64Q4FJAjGmpd9+FQHQnYVWwlUmT6XZNCfOuL7KR998BKgY0yyD2jiq0FRY
+glDrBa9fpvCDfR+7Nq3hqIUJw6RAcUbv0XljkaMG1tEs2Lb10MaSZuH9Jh9uxvcu
+2wIDAQAB
+-----END PUBLIC KEY-----`;
+
 /* ───────────────────── Env (Render → Environment) ─────────────────────
   COMM_APP_SECRET      = Commission app OAuth Client Secret
   KPI_APP_SECRET       = KPI app OAuth Client Secret
@@ -99,6 +112,7 @@ NQIDAQAB
 const COMM_APP_SECRET = process.env.COMM_APP_SECRET || "";
 const KPI_APP_SECRET = process.env.KPI_APP_SECRET || "";
 const MORTGAGE_APP_SECRET = process.env.MORTGAGE_APP_SECRET || "";
+const SHOWINGS_APP_SECRET = process.env.SHOWINGS_APP_SECRET || "";
 
 /* ───────────────────── Verifier Clients (public key only) ───────────────────── */
 
@@ -114,6 +128,11 @@ const verifierKpi = createClient({
 
 const verifierMortgage = createClient({
   auth: AppStrategy({ appId: MORTGAGE_APP_ID, publicKey: MORTGAGE_PUBLIC_KEY }),
+  modules: { appInstances },
+});
+
+const verifierShowings = createClient({
+  auth: AppStrategy({ appId: SHOWINGS_APP_ID, publicKey: SHOWINGS_PUBLIC_KEY }),
   modules: { appInstances },
 });
 
@@ -249,16 +268,19 @@ function isoOrNA(v) {
 async function fetchInstanceDetails(appKey, instanceId) {
   try {
     let appId, appSecret;
-    if (appKey === "commission") {
-      appId = COMM_APP_ID;
-      appSecret = COMM_APP_SECRET;
-    } else if (appKey === "kpi") {
-      appId = KPI_APP_ID;
-      appSecret = KPI_APP_SECRET;
-    } else {
-      appId = MORTGAGE_APP_ID;
-      appSecret = MORTGAGE_APP_SECRET;
-    }
+if (appKey === "commission") {
+  appId = COMM_APP_ID;
+  appSecret = COMM_APP_SECRET;
+} else if (appKey === "kpi") {
+  appId = KPI_APP_ID;
+  appSecret = KPI_APP_SECRET;
+} else if (appKey === "showings") {
+  appId = SHOWINGS_APP_ID;
+  appSecret = SHOWINGS_APP_SECRET;
+} else {
+  appId = MORTGAGE_APP_ID;
+  appSecret = MORTGAGE_APP_SECRET;
+}
 
     if (!appSecret) {
       console.warn(`⚠️ ${appKey.toUpperCase()}_APP_SECRET not set – details may be N/A.`);
@@ -446,6 +468,32 @@ async function handleAppRemoved(event, appLabel, appKey) {
   await sendAdminEmail(`${appLabel} – App Removed`, html);
 }
 
+async function handlePaidPlanChanged(event, appLabel, appKey) {
+  const p = event.payload || {};
+  console.log(`👉 [${appLabel}] Paid plan changed. Instance:`, event.instanceId);
+
+  const extra = await fetchInstanceDetails(appKey, event.instanceId);
+
+  const html = `
+    <h1>${appLabel} – Paid Plan Changed</h1>
+    <ul>
+      <li><strong>Instance ID:</strong> ${event.instanceId}</li>
+      <li><strong>Vendor Product ID:</strong> ${p.vendorProductId || "N/A"}</li>
+      <li><strong>Cycle:</strong> ${p.cycle || "N/A"}</li>
+      <li><strong>Operation time:</strong> ${isoOrNA(p.operationTimeStamp)}</li>
+      <li><strong>Expires on:</strong> ${isoOrNA(p.expiresOn)}</li>
+      <li><strong>Owner Email:</strong> ${extra.ownerEmail}</li>
+      <li><strong>Site Name:</strong> ${extra.siteName}</li>
+      <li><strong>Site ID:</strong> ${extra.siteId}</li>
+      <li><strong>Language:</strong> ${extra.language}</li>
+      <li><strong>Currency:</strong> ${extra.currency}</li>
+    </ul>
+    <h3>Raw Payload</h3>
+    <pre style="white-space:pre-wrap;background:#f6f6f7;padding:12px;border-radius:8px;">${escapeHtml(JSON.stringify(p, null, 2))}</pre>
+  `;
+
+  await sendAdminEmail(`${appLabel} – Paid Plan Changed`, html);
+}
 /* ───────────────────── Showing Emails ───────────────────── */
 
 function normalizeLang(_lang) {
@@ -1749,6 +1797,61 @@ app.post("/webhook-mortgage", async (req, res) => {
     }
   } catch (err) {
     console.error("[Mortgage] webhooks.process failed:", err);
+  }
+
+  res.status(200).send("ok");
+});
+
+app.post("/webhook-showing-scheduler", async (req, res) => {
+  console.log("===== [Showing Scheduler] Webhook received =====");
+  console.log("Raw body:", req.body);
+
+  try {
+    const event = await verifierShowings.webhooks.process(req.body);
+    console.log("Decoded event (Showings):", JSON.stringify(event, null, 2));
+
+    const appLabel = "Clario Showing Scheduler";
+    switch (event.eventType) {
+      case "AppInstalled":
+        await handleAppInstalled(event, appLabel, "showings");
+        break;
+
+      case "PaidPlanPurchased":
+        await handlePaidPlanPurchased(event, appLabel, "showings");
+        break;
+
+      case "PaidPlanChanged":
+        await handlePaidPlanChanged(event, appLabel, "showings");
+        break;
+
+      case "PaidPlanAutoRenewalCancelled":
+        await handlePaidPlanAutoRenewalCancelled(event, appLabel, "showings");
+        break;
+
+      case "PaidPlanReactivated":
+      case "PlanReactivated":
+        await handlePaidPlanReactivated(event, appLabel, "showings");
+        break;
+
+      case "PaidPlanConvertedToPaid":
+      case "PlanConvertedToPaid":
+        await handlePaidPlanConvertedToPaid(event, appLabel, "showings");
+        break;
+
+      case "PaidPlanTransferred":
+      case "PlanTransferred":
+        await handlePaidPlanTransferred(event, appLabel, "showings");
+        break;
+
+      case "AppRemoved":
+        await handleAppRemoved(event, appLabel, "showings");
+        break;
+
+      default:
+        console.log("[Showings] Unhandled event type:", event.eventType);
+    }
+  } catch (err) {
+    console.error("[Showings] webhooks.process failed:", err);
   }
 
   res.status(200).send("ok");
