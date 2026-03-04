@@ -240,7 +240,7 @@ async function sendEmail({ to, subject, html, fromName, replyTo }) {
       to: emails,
       subject,
       html,
-      ...(replyToHeader ? { reply_to: replyToHeader } : {}),
+   ...(replyToHeader ? { reply_to: replyToHeader, replyTo: replyToHeader } : {}),
     });
 
     if (result && result.error) {
