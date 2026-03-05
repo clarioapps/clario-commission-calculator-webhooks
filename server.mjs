@@ -861,11 +861,13 @@ function buildSupportConfirmationEmailHtml({ brokerageName, request }) {
   const sections = `
   ${reqId ? `<div style="margin:0 0 14px 0;">${infoPill(`Request ID: ${reqId}`)}</div>` : ""}
 
-  <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
-    <div>Hi ${escapeHtml(greeting)},</div>
-    <div>We received your support request. Our team will review it and reply by email.</div>
-    <div style="margin-top:10px;">Here’s a copy of what you submitted:</div>
-  </div>
+  <div style="font-size:14px;line-height:1.6;margin-bottom:14px;white-space:pre-line;">
+  <div>Hi ${escapeHtml(greeting)},</div>
+  <div style="margin-top:10px;">Thanks for reaching out — we received your support request ✅</div>
+  <div style="margin-top:10px;">Our support team is reviewing it now, and we’ll reply to this email as soon as we have an update.</div>
+  <div style="margin-top:14px;">— Clario Support</div>
+  <div style="margin-top:14px;">Here’s a copy of what you submitted:</div>
+</div>
 
   <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
     <div style="font-size:12px;color:#666;margin-bottom:6px;">Your Info</div>
@@ -1902,21 +1904,6 @@ app.post("/support/request", async (req, res) => {
     // IMPORTANT: replyTo should be the requester so you can reply directly from your inbox
     const replyTo = requesterEmail;
     const fromName = "Clario Apps";
-     
-    console.log("[SupportRoute] sending ADMIN email", {
-      to: supportTo,
-      replyTo,
-      topicLabel,
-      hasReqId: !!reqId,
-    });
-
-    await sendEmail({
-      to: supportTo,
-      subject: subjectAdmin,
-      html: htmlAdmin,
-      fromName,
-      replyTo,
-    });
 
     // Confirmation email to the requester
     const subjectUser =
@@ -1927,11 +1914,36 @@ app.post("/support/request", async (req, res) => {
       request,
     });
 
+    // ✅ RESPOND IMMEDIATELY (do NOT wait for emails)
+    res.status(200).json({ ok: true, requestId: reqId || "" });
     console.log("[SupportRoute] sending USER confirmation email", {
       to: [requesterEmail],
       hasReqId: !!reqId,
     });
 
+    // ✅ Fire-and-forget: do the email work AFTER success is returned
+Promise.resolve()
+  .then(async () => {
+    const fromNameAdmin = "Clario Apps";
+    const replyToEmail = requesterEmail;
+
+    console.log("[SupportRoute] ASYNC start emails", {
+      reqId: reqId || "",
+      toAdminCount: supportTo.length,
+      toUser: requesterEmail,
+      topicLabel,
+    });
+
+    // 1) ADMIN email
+    await sendEmail({
+      to: supportTo,
+      subject: subjectAdmin,
+      html: htmlAdmin,
+      fromName: fromNameAdmin,
+      replyTo,
+    });
+
+    // 2) USER confirmation email
     await sendEmail({
       to: [requesterEmail],
       subject: subjectUser,
@@ -1940,8 +1952,13 @@ app.post("/support/request", async (req, res) => {
       replyTo: (supportTo && supportTo.length ? supportTo[0] : ADMIN_EMAIL),
     });
 
-    // Return JSON (safe even if Wix backend reads as text)
-    return res.status(200).json({ ok: true, requestId: reqId || "" });
+    console.log("[SupportRoute] ASYNC done emails", { reqId: reqId || "" });
+  })
+  .catch((err) => {
+    console.error("❌ [SupportRoute] ASYNC email send failed:", err);
+  });
+  return;
+     
   } catch (err) {
     console.error("❌ /support/request failed:", err);
     return res.status(500).send("error");
