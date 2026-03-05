@@ -46,6 +46,23 @@ app.use("/showings", (req, _res, next) => {
   next();
 });
 
+/* ───────────────────── Support Route Diagnostics (TEMP) ───────────────────── */
+app.use("/support", (req, _res, next) => {
+  try {
+    console.log("[SupportRoute] INBOUND", {
+      method: req.method,
+      path: req.path,
+      contentType: req.headers["content-type"] || "",
+      reqId: req.headers["x-clario-reqid"] || "",
+      hasBody: !!req.body,
+      bodyKeys: req.body && typeof req.body === "object" ? Object.keys(req.body) : [],
+    });
+  } catch (e) {
+    console.log("[SupportRoute] INBOUND log failed:", e);
+  }
+  next();
+});
+
 /* ───────────────────── Wix App IDs & Public Keys ───────────────────── */
 
 // Commission Calculator
@@ -724,6 +741,114 @@ function emailShell({ brandLine, heading, imgBlock, sectionsHtml, footerHtml, sh
     </div>
   </div>
   `.trim();
+}
+
+function buildSupportAdminEmailHtml({ brokerageName, request, siteBaseUrl }) {
+  const brandLine = brokerageName || "Clario Apps Support";
+
+  const reqId = String(request?.requestId || request?.id || "").trim();
+  const fullName = `${String(request?.firstName || "").trim()} ${String(request?.lastName || "").trim()}`.trim();
+  const email = String(request?.email || "").trim();
+  const siteUrl = String(request?.siteUrl || "").trim();
+  const topic = String(request?.topic || "").trim();
+  const topicLabel = String(request?.topicLabel || "").trim();
+  const desc = String(request?.description || "").trim();
+
+  const attachments = Array.isArray(request?.attachments) ? request.attachments : [];
+  const attachmentsHtml =
+    attachments.length
+      ? `<ul style="margin:0;padding-left:18px;">${
+          attachments
+            .map((a) => {
+              const name = escapeHtml(String(a?.name || "Attachment"));
+              const url = escapeHtml(String(a?.url || ""));
+              if (!url) return "";
+              return `<li><a href="${url}" target="_blank" rel="noopener noreferrer">${name}</a></li>`;
+            })
+            .filter(Boolean)
+            .join("")
+        }</ul>`
+      : `<div style="color:#666;font-size:13px;">None</div>`;
+
+  const sections = `
+    ${reqId ? `<div style="margin:0 0 14px 0;">${infoPill(`Request ID: ${reqId}`)}</div>` : ""}
+
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">Requester</div>
+      <div style="font-size:14px;line-height:1.6;">
+        <div>${escapeHtml(fullName || "—")}</div>
+        ${email ? `<div><a href="mailto:${escapeHtml(email)}" style="color:#0b5cff;text-decoration:none;">${escapeHtml(email)}</a></div>` : ""}
+        ${siteUrl ? `<div>Site: <a href="${escapeHtml(siteUrl)}" target="_blank" rel="noopener noreferrer" style="color:#0b5cff;text-decoration:none;">${escapeHtml(siteUrl)}</a></div>` : ""}
+      </div>
+    </div>
+
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">Topic</div>
+      <div style="font-size:14px;line-height:1.4;">${escapeHtml(topicLabel || topic || "—")}</div>
+    </div>
+
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">Description</div>
+      <div style="font-size:14px;line-height:1.6;white-space:pre-line;">${escapeHtml(desc || "—")}</div>
+    </div>
+
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">Attachments</div>
+      ${attachmentsHtml}
+    </div>
+
+    ${siteBaseUrl ? `<div style="font-size:12px;color:#666;">Site Base URL: ${escapeHtml(siteBaseUrl)}</div>` : ""}
+  `.trim();
+
+  return emailShell({
+    brandLine,
+    heading: "New Support Request",
+    imgBlock: "",
+    sectionsHtml: sections,
+    footerHtml: "",
+    showingId: "",
+  });
+}
+
+function buildSupportConfirmationEmailHtml({ brokerageName, request }) {
+  const brandLine = brokerageName || "Clario Apps Support";
+
+  const reqId = String(request?.requestId || request?.id || "").trim();
+  const firstName = String(request?.firstName || "").trim();
+  const greeting = firstName || "there";
+
+  const topicLabel = String(request?.topicLabel || request?.topic || "").trim();
+  const siteUrl = String(request?.siteUrl || "").trim();
+
+  const sections = `
+    ${reqId ? `<div style="margin:0 0 14px 0;">${infoPill(`Request ID: ${reqId}`)}</div>` : ""}
+
+    <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
+      <div>Hi ${escapeHtml(greeting)},</div>
+      <div>We received your support request. Our team will review it and reply by email.</div>
+    </div>
+
+    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+      <div style="font-size:12px;color:#666;margin-bottom:6px;">Summary</div>
+      <div style="font-size:14px;line-height:1.6;">
+        ${topicLabel ? `<div><strong>Topic:</strong> ${escapeHtml(topicLabel)}</div>` : ""}
+        ${siteUrl ? `<div><strong>Site:</strong> ${escapeHtml(siteUrl)}</div>` : ""}
+      </div>
+    </div>
+
+    <div style="font-size:13px;color:#666;">
+      Tip: keep this email for reference${reqId ? ` (Request ID: ${escapeHtml(reqId)})` : ""}.
+    </div>
+  `.trim();
+
+  return emailShell({
+    brandLine,
+    heading: "Support Request Received",
+    imgBlock: "",
+    sectionsHtml: sections,
+    footerHtml: "",
+    showingId: "",
+  });
 }
 
 /* ───────────────────── Recipient Robustness Helpers ───────────────────── */
@@ -1664,6 +1789,106 @@ app.post("/showings/buyer-received", async (req, res) => {
     return res.status(200).send("ok");
   } catch (err) {
     console.error("❌ /showings/buyer-received failed:", err);
+    return res.status(500).send("error");
+  }
+});
+
+/* ───────────────────── /support/request ───────────────────── */
+
+app.post("/support/request", async (req, res) => {
+  try {
+    console.log("[SupportRoute] HANDLER START /support/request", {
+      reqId: req.headers["x-clario-reqid"] || "",
+    });
+
+    if (!isAuthorized(req)) {
+      console.log("[SupportRoute] UNAUTHORIZED /support/request", {
+        reqId: req.headers["x-clario-reqid"] || "",
+      });
+      return res.status(401).send("unauthorized");
+    }
+
+    const body = req.body || {};
+    const brokerageName = body.brokerageName || "Clario Apps Support";
+    const siteBaseUrl = body.siteBaseUrl || body.baseSiteUrl || "";
+
+    // Expected from Wix backend:
+    // body.to = support inbox list
+    // body.replyTo = requester's email
+    // body.request = { firstName,lastName,email,siteUrl,topic,topicLabel,description,attachments,requestId }
+
+    const request = body.request || {};
+    const requesterEmail = firstEmailFromAny(
+      request?.email,
+      body.replyTo,
+      body.email
+    );
+
+    let supportTo = normalizeToList(body.to);
+    if (supportTo.length === 0 && ADMIN_EMAIL) supportTo = [ADMIN_EMAIL];
+
+    // Hard checks (fail fast)
+    if (supportTo.length === 0) return res.status(400).send("missing support recipient");
+    if (!requesterEmail) return res.status(400).send("missing requester email");
+
+    const topicLabel = String(request?.topicLabel || request?.topic || "Support").trim();
+    const siteUrl = String(request?.siteUrl || "").trim();
+    const reqId = String(request?.requestId || "").trim();
+
+    const subjectAdmin =
+      `Support Request${reqId ? ` (${reqId})` : ""} — ${topicLabel}${siteUrl ? ` — ${siteUrl}` : ""}`;
+
+    const htmlAdmin = buildSupportAdminEmailHtml({
+      brokerageName,
+      request,
+      siteBaseUrl,
+    });
+
+    // IMPORTANT: replyTo should be the requester so you can reply directly from your inbox
+    const replyTo = requesterEmail;
+    const fromName = brokerageName || "Clario Apps Support";
+
+    console.log("[SupportRoute] sending ADMIN email", {
+      to: supportTo,
+      replyTo,
+      topicLabel,
+      hasReqId: !!reqId,
+    });
+
+    await sendEmail({
+      to: supportTo,
+      subject: subjectAdmin,
+      html: htmlAdmin,
+      fromName,
+      replyTo,
+    });
+
+    // Confirmation email to the requester
+    const subjectUser =
+      `We received your support request${reqId ? ` (${reqId})` : ""}`;
+
+    const htmlUser = buildSupportConfirmationEmailHtml({
+      brokerageName,
+      request,
+    });
+
+    console.log("[SupportRoute] sending USER confirmation email", {
+      to: [requesterEmail],
+      hasReqId: !!reqId,
+    });
+
+    await sendEmail({
+      to: [requesterEmail],
+      subject: subjectUser,
+      html: htmlUser,
+      fromName,
+      replyTo: "", // optional; you can omit or set to your support inbox
+    });
+
+    // Return JSON (safe even if Wix backend reads as text)
+    return res.status(200).json({ ok: true, requestId: reqId || "" });
+  } catch (err) {
+    console.error("❌ /support/request failed:", err);
     return res.status(500).send("error");
   }
 });
