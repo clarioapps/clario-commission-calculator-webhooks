@@ -722,6 +722,22 @@ function infoPill(text) {
   `.trim();
 }
 
+function supportTopicLabel(topicValue, topicLabel) {
+  const direct = String(topicLabel || "").trim();
+  if (direct) return direct;
+
+  const v = String(topicValue || "").trim().toLowerCase();
+
+  const map = {
+    billing: "Billing and Upgrades",
+    technical: "Technical Support",
+    feature: "Feature Request",
+    other: "Other",
+  };
+
+  return map[v] || (v ? (v.charAt(0).toUpperCase() + v.slice(1)) : "Support");
+}
+
 function emailShell({ brandLine, heading, imgBlock, sectionsHtml, footerHtml, showingId }) {
   return `
   <div style="background:#f6f6f7;padding:8px;">
@@ -744,14 +760,14 @@ function emailShell({ brandLine, heading, imgBlock, sectionsHtml, footerHtml, sh
 }
 
 function buildSupportAdminEmailHtml({ brokerageName, request, siteBaseUrl }) {
-  const brandLine = brokerageName || "Clario Apps Support";
-
+  const brandLine = "";   
   const reqId = String(request?.requestId || request?.id || "").trim();
   const fullName = `${String(request?.firstName || "").trim()} ${String(request?.lastName || "").trim()}`.trim();
   const email = String(request?.email || "").trim();
   const siteUrl = String(request?.siteUrl || "").trim();
   const topic = String(request?.topic || "").trim();
   const topicLabel = String(request?.topicLabel || "").trim();
+  const topicDisplay = supportTopicLabel(topic, topicLabel);
   const desc = String(request?.description || "").trim();
 
   const attachments = Array.isArray(request?.attachments) ? request.attachments : [];
@@ -784,8 +800,8 @@ function buildSupportAdminEmailHtml({ brokerageName, request, siteBaseUrl }) {
 
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
       <div style="font-size:12px;color:#666;margin-bottom:6px;">Topic</div>
-      <div style="font-size:14px;line-height:1.4;">${escapeHtml(topicLabel || topic || "—")}</div>
-    </div>
+      <div style="font-size:14px;line-height:1.4;">${escapeHtml(topicDisplay || "—")}</div>
+</div>
 
     <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
       <div style="font-size:12px;color:#666;margin-bottom:6px;">Description</div>
@@ -811,35 +827,76 @@ function buildSupportAdminEmailHtml({ brokerageName, request, siteBaseUrl }) {
 }
 
 function buildSupportConfirmationEmailHtml({ brokerageName, request }) {
-  const brandLine = brokerageName || "Clario Apps Support";
-
+  const brandLine = "";
+   
   const reqId = String(request?.requestId || request?.id || "").trim();
   const firstName = String(request?.firstName || "").trim();
   const greeting = firstName || "there";
+  const lastName = String(request?.lastName || "").trim();
+  const fullName = `${firstName} ${lastName}`.trim();
+  const email = String(request?.email || "").trim();
+  const siteUrl = String(request?.siteUrl || "").trim();
 
-  const topicLabel = String(request?.topicLabel || request?.topic || "").trim();
+  const topic = String(request?.topic || "").trim();
+  const topicLabelRaw = String(request?.topicLabel || "").trim();
+  const topicDisplay = supportTopicLabel(topic, topicLabelRaw);
+
+  const desc = String(request?.description || "").trim();
+
+  const attachments = Array.isArray(request?.attachments) ? request.attachments : [];
+  const attachmentsHtml =
+  attachments.length
+    ? `<ul style="margin:0;padding-left:18px;">${
+        attachments
+          .map((a) => {
+            const name = escapeHtml(String(a?.name || "Attachment"));
+            const url = escapeHtml(String(a?.url || ""));
+            if (!url) return "";
+            return `<li><a href="${url}" target="_blank" rel="noopener noreferrer">${name}</a></li>`;
+          })
+          .filter(Boolean)
+          .join("")
+      }</ul>`
+    : `<div style="color:#666;font-size:13px;">None</div>`;
   const siteUrl = String(request?.siteUrl || "").trim();
 
   const sections = `
-    ${reqId ? `<div style="margin:0 0 14px 0;">${infoPill(`Request ID: ${reqId}`)}</div>` : ""}
+  ${reqId ? `<div style="margin:0 0 14px 0;">${infoPill(`Request ID: ${reqId}`)}</div>` : ""}
 
-    <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
-      <div>Hi ${escapeHtml(greeting)},</div>
-      <div>We received your support request. Our team will review it and reply by email.</div>
-    </div>
+  <div style="font-size:14px;line-height:1.6;margin-bottom:14px;">
+    <div>Hi ${escapeHtml(greeting)},</div>
+    <div>We received your support request. Our team will review it and reply by email.</div>
+    <div style="margin-top:10px;">Here’s a copy of what you submitted:</div>
+  </div>
 
-    <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
-      <div style="font-size:12px;color:#666;margin-bottom:6px;">Summary</div>
-      <div style="font-size:14px;line-height:1.6;">
-        ${topicLabel ? `<div><strong>Topic:</strong> ${escapeHtml(topicLabel)}</div>` : ""}
-        ${siteUrl ? `<div><strong>Site:</strong> ${escapeHtml(siteUrl)}</div>` : ""}
-      </div>
+  <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+    <div style="font-size:12px;color:#666;margin-bottom:6px;">Your Info</div>
+    <div style="font-size:14px;line-height:1.6;">
+      <div>${escapeHtml(fullName || "—")}</div>
+      ${email ? `<div>${escapeHtml(email)}</div>` : ""}
+      ${siteUrl ? `<div>Site: <a href="${escapeHtml(siteUrl)}" target="_blank" rel="noopener noreferrer" style="color:#0b5cff;text-decoration:none;">${escapeHtml(siteUrl)}</a></div>` : ""}
     </div>
+  </div>
 
-    <div style="font-size:13px;color:#666;">
-      Tip: keep this email for reference${reqId ? ` (Request ID: ${escapeHtml(reqId)})` : ""}.
-    </div>
-  `.trim();
+  <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+    <div style="font-size:12px;color:#666;margin-bottom:6px;">Topic</div>
+    <div style="font-size:14px;line-height:1.4;">${escapeHtml(topicDisplay || "—")}</div>
+  </div>
+
+  <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+    <div style="font-size:12px;color:#666;margin-bottom:6px;">Description</div>
+    <div style="font-size:14px;line-height:1.6;white-space:pre-line;">${escapeHtml(desc || "—")}</div>
+  </div>
+
+  <div style="border:1px solid #eee;border-radius:12px;padding:16px;margin-bottom:14px;">
+    <div style="font-size:12px;color:#666;margin-bottom:6px;">Attachments</div>
+    ${attachmentsHtml}
+  </div>
+
+  <div style="font-size:13px;color:#666;">
+    Tip: keep this email for reference${reqId ? ` (Request ID: ${escapeHtml(reqId)})` : ""}.
+  </div>
+`.trim();
 
   return emailShell({
     brandLine,
@@ -1846,8 +1903,8 @@ app.post("/support/request", async (req, res) => {
 
     // IMPORTANT: replyTo should be the requester so you can reply directly from your inbox
     const replyTo = requesterEmail;
-    const fromName = brokerageName || "Clario Apps Support";
-
+    const fromName = "Clario Apps";
+     
     console.log("[SupportRoute] sending ADMIN email", {
       to: supportTo,
       replyTo,
@@ -1881,8 +1938,8 @@ app.post("/support/request", async (req, res) => {
       to: [requesterEmail],
       subject: subjectUser,
       html: htmlUser,
-      fromName,
-      replyTo: "", // optional; you can omit or set to your support inbox
+      fromName: "Clario Apps",
+      replyTo: (supportTo && supportTo.length ? supportTo[0] : ADMIN_EMAIL),
     });
 
     // Return JSON (safe even if Wix backend reads as text)
