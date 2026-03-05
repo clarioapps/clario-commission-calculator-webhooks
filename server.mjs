@@ -858,8 +858,6 @@ function buildSupportConfirmationEmailHtml({ brokerageName, request }) {
           .join("")
       }</ul>`
     : `<div style="color:#666;font-size:13px;">None</div>`;
-  const siteUrl = String(request?.siteUrl || "").trim();
-
   const sections = `
   ${reqId ? `<div style="margin:0 0 14px 0;">${infoPill(`Request ID: ${reqId}`)}</div>` : ""}
 
@@ -1888,7 +1886,7 @@ app.post("/support/request", async (req, res) => {
     if (supportTo.length === 0) return res.status(400).send("missing support recipient");
     if (!requesterEmail) return res.status(400).send("missing requester email");
 
-    const topicLabel = String(request?.topicLabel || request?.topic || "Support").trim();
+    const topicLabel = supportTopicLabel(request?.topic, request?.topicLabel);
     const siteUrl = String(request?.siteUrl || "").trim();
     const reqId = String(request?.requestId || "").trim();
 
