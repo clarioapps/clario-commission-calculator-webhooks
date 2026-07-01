@@ -1565,6 +1565,168 @@ function buildBuyerStatusEmailHtml({
   });
 }
 
+function buildEarlyAccessRegistrationEmailHtml({
+  registration
+}) {
+  const record = registration || {};
+
+  const firstName =
+    String(record.firstName || "").trim();
+
+  const lastName =
+    String(record.lastName || "").trim();
+
+  const fullName =
+    `${firstName} ${lastName}`.trim();
+
+  const email =
+    String(record.email || "").trim();
+
+  const brokerageName =
+    String(record.brokerageName || "").trim();
+
+  const role =
+    String(record.role || "").trim();
+
+  const teamSize =
+    String(record.teamSize || "").trim();
+
+  const isTeamOrBroker =
+    role === "Team Leader" ||
+    role === "Broker";
+
+  const subscribeLabel =
+    record.subscribe === true
+      ? "Subscribed"
+      : "Not subscribed";
+
+  const greeting =
+    firstName || "there";
+
+  const teamSizeRow =
+    isTeamOrBroker && teamSize
+      ? `
+        <div style="margin-top:8px;">
+          <strong>Team Size:</strong>
+          ${escapeHtml(teamSize)}
+        </div>
+      `
+      : "";
+
+  const sections = `
+    <div style="font-size:14px;line-height:1.65;margin-bottom:18px;">
+      <div>Hi ${escapeHtml(greeting)},</div>
+
+      <div style="margin-top:12px;">
+        Thank you for pre-registering for ShowingHQ Early Access.
+      </div>
+
+      <div style="margin-top:12px;">
+        Your registration is confirmed, and your exclusive launch savings have been reserved:
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px;">
+      <div style="border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;padding:16px;">
+        <div style="font-size:12px;color:#475569;margin-bottom:6px;">
+          Monthly Plan
+        </div>
+
+        <div style="font-size:18px;font-weight:700;color:#0b5cff;">
+          25% Off
+        </div>
+
+        <div style="font-size:13px;color:#334155;margin-top:4px;">
+          Your first 12 months
+        </div>
+      </div>
+
+      <div style="border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;padding:16px;">
+        <div style="font-size:12px;color:#475569;margin-bottom:6px;">
+          Yearly Plan
+        </div>
+
+        <div style="font-size:18px;font-weight:700;color:#0b5cff;">
+          50% Off
+        </div>
+
+        <div style="font-size:13px;color:#334155;margin-top:4px;">
+          Your first year
+        </div>
+      </div>
+    </div>
+
+    <div style="font-size:14px;line-height:1.65;margin-bottom:18px;">
+      A few days before ShowingHQ officially launches, we’ll email you both of your unique discount codes along with instructions for creating your account. The codes will be valid for 30 days after launch.
+    </div>
+
+    <div style="border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:18px;">
+      <div style="font-size:12px;color:#64748b;margin-bottom:10px;">
+        Your Registration
+      </div>
+
+      <div style="font-size:14px;line-height:1.55;">
+        <div>
+          <strong>Name:</strong>
+          ${escapeHtml(fullName || "—")}
+        </div>
+
+        <div style="margin-top:8px;">
+          <strong>Email:</strong>
+          ${escapeHtml(email || "—")}
+        </div>
+
+        <div style="margin-top:8px;">
+          <strong>Brokerage:</strong>
+          ${escapeHtml(brokerageName || "—")}
+        </div>
+
+        <div style="margin-top:8px;">
+          <strong>Role:</strong>
+          ${escapeHtml(role || "—")}
+        </div>
+
+        ${teamSizeRow}
+
+        <div style="margin-top:8px;">
+          <strong>Product Updates:</strong>
+          ${escapeHtml(subscribeLabel)}
+        </div>
+      </div>
+    </div>
+
+    <div style="font-size:14px;line-height:1.65;margin-bottom:14px;">
+      We’re building ShowingHQ to help real estate professionals turn more listing interest into leads and showing requests—while giving buyers a faster, easier way to take the next step.
+    </div>
+
+    <div style="font-size:14px;line-height:1.65;">
+      We look forward to welcoming you at launch.
+    </div>
+
+    <div style="font-size:14px;line-height:1.65;margin-top:18px;">
+      — The ShowingHQ Team
+    </div>
+  `.trim();
+
+  const emailHtml = emailShell({
+    brandLine: "ShowingHQ Early Access",
+    heading:
+      "You’re Pre-Registered for ShowingHQ Early Access",
+    imgBlock: "",
+    sectionsHtml: sections,
+    footerHtml: "",
+    showingId: ""
+  });
+
+  return `
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+      Your early-access savings are reserved. We’ll send your discount codes shortly before launch.
+    </div>
+
+    ${emailHtml}
+  `.trim();
+}
+
 /* ───────────────────── Protected endpoints from Wix backend ───────────────────── */
 
 function isAuthorized(req) {
@@ -1594,6 +1756,112 @@ function isAuthorized(req) {
 
   return ok;
 }
+
+/* ───────────────────── /early-access/registration-confirmed ───────────────────── */
+
+app.post(
+  "/early-access/registration-confirmed",
+  async (req, res) => {
+    try {
+      console.log(
+        "[EarlyAccessRoute] HANDLER START /early-access/registration-confirmed",
+        {
+          reqId:
+            req.headers["x-clario-reqid"] || ""
+        }
+      );
+
+      if (!isAuthorized(req)) {
+        console.log(
+          "[EarlyAccessRoute] UNAUTHORIZED /early-access/registration-confirmed",
+          {
+            reqId:
+              req.headers["x-clario-reqid"] || ""
+          }
+        );
+
+        return res
+          .status(401)
+          .send("unauthorized");
+      }
+
+      const body = req.body || {};
+      const registration =
+        body.registration || {};
+
+      const registrantEmail =
+        firstEmailFromAny(
+          registration.email,
+          body.email
+        );
+
+      let to = normalizeToList(body.to);
+
+      if (
+        to.length === 0 &&
+        registrantEmail
+      ) {
+        to = [registrantEmail];
+      }
+
+      if (to.length === 0) {
+        return res
+          .status(400)
+          .send("missing registrant email");
+      }
+
+      const subject =
+        "You’re Pre-Registered for ShowingHQ Early Access";
+
+      const html =
+        buildEarlyAccessRegistrationEmailHtml({
+          registration
+        });
+
+      const replyTo =
+        String(
+          body.replyTo ||
+          "support@showinghq.com"
+        ).trim();
+
+      const fromName = "ShowingHQ";
+
+      console.log(
+        "[EarlyAccessRoute] registration email computed",
+        {
+          to,
+          email:
+            registrantEmail || "",
+          role:
+            String(
+              registration.role || ""
+            ).trim()
+        }
+      );
+
+      await sendEmail({
+        to,
+        subject,
+        html,
+        fromName,
+        replyTo
+      });
+
+      return res
+        .status(200)
+        .send("ok");
+    } catch (err) {
+      console.error(
+        "❌ /early-access/registration-confirmed failed:",
+        err
+      );
+
+      return res
+        .status(500)
+        .send("error");
+    }
+  }
+);
 
 /* ───────────────────── /showings/new-request ───────────────────── */
 
