@@ -1757,14 +1757,13 @@ function isAuthorized(req) {
   return ok;
 }
 
-/* ───────────────────── /early-access/registration-confirmed ───────────────────── */
-
+/* ───────────────────── /showings/early-access-registration ───────────────────── */
 app.post(
-  "/early-access/registration-confirmed",
+  "/showings/early-access-registration",
   async (req, res) => {
     try {
       console.log(
-        "[EarlyAccessRoute] HANDLER START /early-access/registration-confirmed",
+        "[EarlyAccessRoute] HANDLER START /showings/early-access-registration",
         {
           reqId:
             req.headers["x-clario-reqid"] || ""
@@ -1773,7 +1772,7 @@ app.post(
 
       if (!isAuthorized(req)) {
         console.log(
-          "[EarlyAccessRoute] UNAUTHORIZED /early-access/registration-confirmed",
+          "[EarlyAccessRoute] UNAUTHORIZED /showings/early-access-registration",
           {
             reqId:
               req.headers["x-clario-reqid"] || ""
