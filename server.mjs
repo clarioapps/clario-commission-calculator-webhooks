@@ -1758,109 +1758,111 @@ function isAuthorized(req) {
 }
 
 /* ───────────────────── /showings/early-access-registration ───────────────────── */
-app.post(
-  "/showings/early-access-registration",
-  async (req, res) => {
-    try {
+
+app.post("/showings/early-access-registration", async (req, res) => {
+  try {
+    console.log(
+      "[ShowingsRoute] HANDLER START /showings/early-access-registration",
+      {
+        reqId: req.headers["x-clario-reqid"] || ""
+      }
+    );
+
+    if (!isAuthorized(req)) {
       console.log(
-        "[EarlyAccessRoute] HANDLER START /showings/early-access-registration",
+        "[ShowingsRoute] UNAUTHORIZED /showings/early-access-registration",
         {
-          reqId:
-            req.headers["x-clario-reqid"] || ""
+          reqId: req.headers["x-clario-reqid"] || ""
         }
       );
 
-      if (!isAuthorized(req)) {
-        console.log(
-          "[EarlyAccessRoute] UNAUTHORIZED /showings/early-access-registration",
-          {
-            reqId:
-              req.headers["x-clario-reqid"] || ""
-          }
-        );
+      return res.status(401).send("unauthorized");
+    }
 
-        return res
-          .status(401)
-          .send("unauthorized");
-      }
+    const body = req.body || {};
+    const registration = body.registration || {};
 
-      const body = req.body || {};
-      const registration =
-        body.registration || {};
+    let to = normalizeToList(body.to);
 
-      const registrantEmail =
-        firstEmailFromAny(
-          registration.email,
-          body.email
-        );
+    const registrantEmail = firstEmailFromAny(
+      registration.email,
+      body.email
+    );
 
-      let to = normalizeToList(body.to);
+    if (to.length === 0 && registrantEmail) {
+      to = [registrantEmail];
+    }
 
-      if (
-        to.length === 0 &&
-        registrantEmail
-      ) {
-        to = [registrantEmail];
-      }
-
-      if (to.length === 0) {
-        return res
-          .status(400)
-          .send("missing registrant email");
-      }
-
-      const subject =
-        "You’re Pre-Registered for ShowingHQ Early Access";
-
-      const html =
-        buildEarlyAccessRegistrationEmailHtml({
-          registration
-        });
-
-      const replyTo =
-        String(
-          body.replyTo ||
-          "support@showinghq.com"
-        ).trim();
-
-      const fromName = "ShowingHQ";
-
-      console.log(
-        "[EarlyAccessRoute] registration email computed",
+    if (to.length === 0) {
+      console.warn(
+        "[ShowingsRoute] Early Access email has no valid recipient",
         {
-          to,
-          email:
-            registrantEmail || "",
-          role:
-            String(
-              registration.role || ""
-            ).trim()
+          bodyTo: body.to || null,
+          registrationEmail:
+            registration.email || ""
         }
       );
 
-      await sendEmail({
-        to,
-        subject,
-        html,
-        fromName,
-        replyTo
+      return res
+        .status(400)
+        .send("missing registrant email");
+    }
+
+    const subject =
+      "You’re Pre-Registered for ShowingHQ Early Access";
+
+    const html =
+      buildEarlyAccessRegistrationEmailHtml({
+        registration
       });
 
-      return res
-        .status(200)
-        .send("ok");
-    } catch (err) {
-      console.error(
-        "❌ /early-access/registration-confirmed failed:",
-        err
-      );
+    const replyTo = String(
+      body.replyTo ||
+      "support@showinghq.com"
+    ).trim();
 
-      return res
-        .status(500)
-        .send("error");
-    }
+    const fromName = "ShowingHQ";
+
+    console.log(
+      "[ShowingsRoute] Early Access SEND prepared",
+      {
+        reqId:
+          req.headers["x-clario-reqid"] || "",
+        to,
+        registrationId:
+          registration.id || "",
+        registrationEmail:
+          registration.email || ""
+      }
+    );
+
+    await sendEmail({
+      to,
+      subject,
+      html,
+      fromName,
+      replyTo
+    });
+
+    console.log(
+      "[ShowingsRoute] Early Access SEND completed",
+      {
+        reqId:
+          req.headers["x-clario-reqid"] || "",
+        to
+      }
+    );
+
+    return res.status(200).send("ok");
+  } catch (err) {
+    console.error(
+      "❌ /showings/early-access-registration failed:",
+      err
+    );
+
+    return res.status(500).send("error");
   }
-);
+});
 
 /* ───────────────────── /showings/new-request ───────────────────── */
 
