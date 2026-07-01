@@ -1577,7 +1577,9 @@ function buildEarlyAccessRegistrationEmailHtml({
     String(record.lastName || "").trim();
 
   const fullName =
-    `${firstName} ${lastName}`.trim();
+    [firstName, lastName]
+      .filter(Boolean)
+      .join(" ");
 
   const email =
     String(record.email || "").trim();
@@ -1591,78 +1593,78 @@ function buildEarlyAccessRegistrationEmailHtml({
   const teamSize =
     String(record.teamSize || "").trim();
 
-  const isTeamOrBroker =
-    role === "Team Leader" ||
-    role === "Broker";
+  const greeting =
+    firstName || "there";
 
   const subscribeLabel =
     record.subscribe === true
       ? "Subscribed"
       : "Not subscribed";
 
-  const greeting =
-    firstName || "there";
+  const showTeamSize =
+    (role === "Team Leader" ||
+      role === "Broker") &&
+    !!teamSize;
 
-  const teamSizeRow =
-    isTeamOrBroker && teamSize
-      ? `
-        <div style="margin-top:8px;">
-          <strong>Team Size:</strong>
-          ${escapeHtml(teamSize)}
-        </div>
-      `
-      : "";
+  const teamSizeRow = showTeamSize
+    ? `
+      <div style="margin-top:8px;">
+        <strong>Team Size:</strong>
+        ${escapeHtml(teamSize)}
+      </div>
+    `
+    : "";
 
   const sections = `
     <div style="font-size:14px;line-height:1.65;margin-bottom:18px;">
-      <div>Hi ${escapeHtml(greeting)},</div>
+      <div>
+        Hi ${escapeHtml(greeting)},
+      </div>
 
       <div style="margin-top:12px;">
         Thank you for pre-registering for ShowingHQ Early Access.
       </div>
 
       <div style="margin-top:12px;">
-        Your registration is confirmed, and your exclusive launch savings have been reserved:
+        Your registration is confirmed, and your exclusive launch savings have been reserved.
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:18px;">
-      <div style="border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;padding:16px;">
-        <div style="font-size:12px;color:#475569;margin-bottom:6px;">
-          Monthly Plan
-        </div>
-
-        <div style="font-size:18px;font-weight:700;color:#0b5cff;">
-          25% Off
-        </div>
-
-        <div style="font-size:13px;color:#334155;margin-top:4px;">
-          Your first 12 months
-        </div>
+    <div style="border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;padding:16px;margin-bottom:12px;">
+      <div style="font-size:12px;color:#475569;margin-bottom:6px;">
+        Monthly Plan
       </div>
 
-      <div style="border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;padding:16px;">
-        <div style="font-size:12px;color:#475569;margin-bottom:6px;">
-          Yearly Plan
-        </div>
+      <div style="font-size:20px;font-weight:700;color:#0b5cff;">
+        25% Off
+      </div>
 
-        <div style="font-size:18px;font-weight:700;color:#0b5cff;">
-          50% Off
-        </div>
+      <div style="font-size:13px;color:#334155;margin-top:4px;">
+        Your first 12 months
+      </div>
+    </div>
 
-        <div style="font-size:13px;color:#334155;margin-top:4px;">
-          Your first year
-        </div>
+    <div style="border:1px solid #dbeafe;background:#eff6ff;border-radius:12px;padding:16px;margin-bottom:18px;">
+      <div style="font-size:12px;color:#475569;margin-bottom:6px;">
+        Yearly Plan
+      </div>
+
+      <div style="font-size:20px;font-weight:700;color:#0b5cff;">
+        50% Off
+      </div>
+
+      <div style="font-size:13px;color:#334155;margin-top:4px;">
+        Your first year
       </div>
     </div>
 
     <div style="font-size:14px;line-height:1.65;margin-bottom:18px;">
-      A few days before ShowingHQ officially launches, we’ll email you both of your unique discount codes along with instructions for creating your account. The codes will be valid for 30 days after launch.
+      Before ShowingHQ officially launches, we’ll email you both of your unique discount codes along with instructions for creating your account.
     </div>
 
     <div style="border:1px solid #e5e7eb;border-radius:12px;padding:16px;margin-bottom:18px;">
       <div style="font-size:12px;color:#64748b;margin-bottom:10px;">
-        Your Registration
+        Your Early Access Registration
       </div>
 
       <div style="font-size:14px;line-height:1.55;">
@@ -1720,7 +1722,7 @@ function buildEarlyAccessRegistrationEmailHtml({
 
   return `
     <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
-      Your early-access savings are reserved. We’ll send your discount codes shortly before launch.
+      Your ShowingHQ Early Access registration is confirmed.
     </div>
 
     ${emailHtml}
@@ -1759,110 +1761,120 @@ function isAuthorized(req) {
 
 /* ───────────────────── /showings/early-access-registration ───────────────────── */
 
-app.post("/showings/early-access-registration", async (req, res) => {
-  try {
-    console.log(
-      "[ShowingsRoute] HANDLER START /showings/early-access-registration",
-      {
-        reqId: req.headers["x-clario-reqid"] || ""
-      }
-    );
-
-    if (!isAuthorized(req)) {
+app.post(
+  "/showings/early-access-registration",
+  async (req, res) => {
+    try {
       console.log(
-        "[ShowingsRoute] UNAUTHORIZED /showings/early-access-registration",
+        "[ShowingsRoute] HANDLER START /showings/early-access-registration",
         {
-          reqId: req.headers["x-clario-reqid"] || ""
+          reqId:
+            req.headers["x-clario-reqid"] || ""
         }
       );
 
-      return res.status(401).send("unauthorized");
-    }
+      if (!isAuthorized(req)) {
+        console.log(
+          "[ShowingsRoute] UNAUTHORIZED /showings/early-access-registration",
+          {
+            reqId:
+              req.headers["x-clario-reqid"] || ""
+          }
+        );
 
-    const body = req.body || {};
-    const registration = body.registration || {};
+        return res
+          .status(401)
+          .send("unauthorized");
+      }
 
-    let to = normalizeToList(body.to);
+      const body = req.body || {};
 
-    const registrantEmail = firstEmailFromAny(
-      registration.email,
-      body.email
-    );
+      const registration =
+        body.registration || {};
 
-    if (to.length === 0 && registrantEmail) {
-      to = [registrantEmail];
-    }
+      let to =
+        normalizeToList(body.to);
 
-    if (to.length === 0) {
-      console.warn(
-        "[ShowingsRoute] Early Access email has no valid recipient",
+      const registrantEmail =
+        firstEmailFromAny(
+          registration.email,
+          body.email
+        );
+
+      if (
+        to.length === 0 &&
+        registrantEmail
+      ) {
+        to = [registrantEmail];
+      }
+
+      if (to.length === 0) {
+        console.warn(
+          "[ShowingsRoute] Early Access email has no valid recipient",
+          {
+            bodyTo: body.to || null,
+            registrationEmail:
+              registration.email || ""
+          }
+        );
+
+        return res
+          .status(400)
+          .send("missing registrant email");
+      }
+
+      const subject =
+        "You’re Pre-Registered for ShowingHQ Early Access";
+
+      const html =
+        buildEarlyAccessRegistrationEmailHtml({
+          registration
+        });
+
+      const replyTo =
+        String(
+          body.replyTo ||
+          "support@showinghq.com"
+        ).trim();
+
+      const fromName =
+        "ShowingHQ";
+
+      console.log(
+        "[ShowingsRoute] /showings/early-access-registration computed",
         {
-          bodyTo: body.to || null,
+          to,
+          replyTo,
+          registrationId:
+            registration.id || "",
           registrationEmail:
             registration.email || ""
         }
       );
 
-      return res
-        .status(400)
-        .send("missing registrant email");
-    }
-
-    const subject =
-      "You’re Pre-Registered for ShowingHQ Early Access";
-
-    const html =
-      buildEarlyAccessRegistrationEmailHtml({
-        registration
+      await sendEmail({
+        to,
+        subject,
+        html,
+        fromName,
+        replyTo
       });
 
-    const replyTo = String(
-      body.replyTo ||
-      "support@showinghq.com"
-    ).trim();
+      return res
+        .status(200)
+        .send("ok");
+    } catch (err) {
+      console.error(
+        "❌ /showings/early-access-registration failed:",
+        err
+      );
 
-    const fromName = "ShowingHQ";
-
-    console.log(
-      "[ShowingsRoute] Early Access SEND prepared",
-      {
-        reqId:
-          req.headers["x-clario-reqid"] || "",
-        to,
-        registrationId:
-          registration.id || "",
-        registrationEmail:
-          registration.email || ""
-      }
-    );
-
-    await sendEmail({
-      to,
-      subject,
-      html,
-      fromName,
-      replyTo
-    });
-
-    console.log(
-      "[ShowingsRoute] Early Access SEND completed",
-      {
-        reqId:
-          req.headers["x-clario-reqid"] || "",
-        to
-      }
-    );
-
-    return res.status(200).send("ok");
-  } catch (err) {
-    console.error(
-      "❌ /showings/early-access-registration failed:",
-      err
-    );
-
-    return res.status(500).send("error");
+      return res
+        .status(500)
+        .send("error");
+    }
   }
-});
+);
 
 /* ───────────────────── /showings/new-request ───────────────────── */
 
